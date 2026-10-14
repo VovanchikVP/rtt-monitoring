@@ -8,7 +8,7 @@ metadata:
   name: rtt-config
   namespace: rtt
 data:
-  APP_DB_HOST: postgres.rtt.svc.cluster.local
+  APP_DB_HOST: postgis.default.svc.cluster.local
   APP_DB_NAME: rtt
   APP_DB_USER: rtt
   APP_RABBITMQ_HOST: rabbitmq.rtt.svc.cluster.local

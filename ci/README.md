@@ -111,9 +111,47 @@ base64 -i wg0.conf | pbcopy   # → секрет WG_CONFIG
 ```
 
 В `KUBE_CONFIG` адрес сервера должен быть тем, который виден в сети WG
-(`server: https://10.8.0.10:6443`), а не `127.0.0.1`. Сертификат k3s по умолчанию
-выписан на IP ноды — если адрес другой, добавьте его в `--tls-san` при установке
-k3s либо оставьте в kubeconfig тот IP, что уже есть в SAN.
+(`server: https://10.8.0.2:6443`), а не `127.0.0.1`.
+
+### Сертификат API должен знать WG-адрес
+
+По умолчанию сертификат k3s выписан на адреса ноды в её локальной сети.
+При обращении по WG-адресу `kubectl` падает так:
+
+```
+tls: failed to verify certificate: x509: certificate is valid for
+10.43.0.1, 127.0.0.1, 192.168.1.132, ::1, not 10.8.0.2
+```
+
+Лечится добавлением WG-адреса в SAN на ноде k3s:
+
+```bash
+# /etc/rancher/k3s/config.yaml
+tls-san:
+  - 10.8.0.2
+
+sudo systemctl restart k3s
+```
+
+k3s перевыпускает сертификат при изменении списка SAN. Если адрес в сертификате
+не появился, удалите серверный сертификат и перезапустите ещё раз — он создастся
+заново:
+
+```bash
+sudo rm /var/lib/rancher/k3s/server/tls/serving-kube-apiserver.crt \
+        /var/lib/rancher/k3s/server/tls/serving-kube-apiserver.key
+sudo systemctl restart k3s
+```
+
+Проверка:
+
+```bash
+openssl s_client -connect 10.8.0.2:6443 </dev/null 2>/dev/null \
+  | openssl x509 -noout -text | grep -A1 "Subject Alternative Name"
+```
+
+CA при этом не меняется, поэтому секрет `KUBE_CONFIG` переделывать не нужно.
+Перезапуск k3s ненадолго гасит только API — поды продолжают работать.
 
 ### Альтернатива: self-hosted runner
 
