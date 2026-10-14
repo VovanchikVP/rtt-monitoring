@@ -45,10 +45,87 @@ kubectl -n rtt rollout status deployment/rtt-api
 | Секрет / переменная | Назначение |
 |---|---|
 | `KUBE_CONFIG` | kubeconfig кластера в base64: `base64 -i ~/.kube/k3s.yaml \| pbcopy` |
+| `WG_CONFIG` | конфиг WireGuard-пира для раннера, в base64 |
+| `KUBE_API` | адрес API кластера в сети WG, например `10.8.0.10:6443` |
 | Environment `production` | можно включить ручное подтверждение выкатки |
 
 Образ публикуется в GHCR под именем репозитория, отдельный токен не нужен —
 хватает `GITHUB_TOKEN` с правом `packages: write`.
+
+## Доступ к закрытому кластеру через WireGuard
+
+Кластер не виден из интернета, поэтому раннер GitHub сам поднимается пиром
+в сеть WG и уже оттуда ходит в API кластера.
+
+### На сервере с WireGuard
+
+Завести пир для CI (ключи генерируются локально, в git не попадают):
+
+```bash
+wg genkey | tee runner.key | wg pubkey > runner.pub
+
+# добавить пир на работающем интерфейсе — применяется сразу
+sudo wg set wg0 peer "$(cat runner.pub)" allowed-ips 10.8.0.50/32
+
+# и дописать его в конфиг, чтобы пережил перезапуск
+sudo tee -a /etc/wireguard/wg0.conf > /dev/null <<EOF
+
+[Peer]
+# github actions runner
+PublicKey = $(cat runner.pub)
+AllowedIPs = 10.8.0.50/32
+EOF
+
+sudo wg show wg0   # пир должен быть в списке
+```
+
+Если привычнее перечитывать конфиг целиком, команду нужно выполнять
+полностью от root — иначе `wg-quick strip` внутри подстановки запускается
+от обычного пользователя и падает:
+
+```bash
+sudo bash -c 'wg syncconf wg0 <(wg-quick strip wg0)'
+```
+
+Раннер подключается сам, поэтому `Endpoint` для этого пира на сервере не нужен.
+Убедитесь, что с адреса пира маршрутизируется сеть кластера
+(`net.ipv4.ip_forward=1` и правила forward/NAT на сервере).
+
+### Секрет `WG_CONFIG`
+
+```ini
+[Interface]
+PrivateKey = <содержимое runner.key>
+Address = 10.8.0.50/32
+
+[Peer]
+PublicKey = <публичный ключ сервера>
+Endpoint = <внешний адрес сервера>:51820
+# адреса, которые ходят через туннель: сеть WG и подсеть кластера
+AllowedIPs = 10.8.0.0/24, 10.42.0.0/16
+PersistentKeepalive = 25
+```
+
+```bash
+base64 -i wg0.conf | pbcopy   # → секрет WG_CONFIG
+```
+
+В `KUBE_CONFIG` адрес сервера должен быть тем, который виден в сети WG
+(`server: https://10.8.0.10:6443`), а не `127.0.0.1`. Сертификат k3s по умолчанию
+выписан на IP ноды — если адрес другой, добавьте его в `--tls-san` при установке
+k3s либо оставьте в kubeconfig тот IP, что уже есть в SAN.
+
+### Альтернатива: self-hosted runner
+
+Если не хочется пускать CI в VPN, поставьте раннер на машину внутри сети
+(сервер WG или нода кластера) — он сам ходит к GitHub наружу, входящие
+соединения не нужны. Тогда в `cd.yml` у job `deploy`:
+
+- `runs-on: self-hosted` вместо `ubuntu-latest`;
+- шаги «Подключиться к сети WireGuard», «Проверить, что API кластера виден»
+  и «Отключиться от WireGuard» удалить.
+
+Job `build` при этом остаётся на `ubuntu-latest`.
 
 ## Доступ к API снаружи
 

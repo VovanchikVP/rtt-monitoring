@@ -57,6 +57,20 @@ jobs:
 
       - uses: azure/setup-kubectl@v4
 
+      - name: Подключиться к сети WireGuard
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq wireguard-tools
+          echo "${{ secrets.WG_CONFIG }}" | base64 -d | sudo tee /etc/wireguard/wg0.conf > /dev/null
+          sudo chmod 600 /etc/wireguard/wg0.conf
+          sudo wg-quick up wg0
+          sudo wg show
+
+      - name: Проверить, что API кластера виден
+        run: |
+          host=$(echo "${{ secrets.KUBE_API }}" | sed -E 's#https?://##; s#/.*##')
+          nc -z -w 5 "${host%%:*}" "${host##*:}" && echo "кластер доступен: $host"
+
       - name: Установить kustomize
         run: |
           version=v5.5.0
@@ -96,3 +110,7 @@ jobs:
       - name: Состояние после выкатки
         if: always()
         run: kubectl -n rtt get pods -o wide
+
+      - name: Отключиться от WireGuard
+        if: always()
+        run: sudo wg-quick down wg0 || true
