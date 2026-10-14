@@ -19,3 +19,14 @@ class TourRead(BaseModel):
     location: str | None = None
     begin_date: date | None = None
     end_date: date | None = None
+
+
+class TourPlayerRead(BaseModel):
+    """Участник турнира в итоговом списке."""
+
+    number: int = Field(description="Порядковый номер в списке")
+    id: int
+    name: str | None = None
+    age: int | None = Field(default=None, description="Полных лет")
+    city: str | None = None
+    points: int = Field(default=0, description="Текущие рейтинговые очки")

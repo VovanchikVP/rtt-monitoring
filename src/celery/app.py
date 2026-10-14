@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Coroutine
 
 from celery import Celery
+from celery.schedules import crontab
 from celery.signals import worker_process_init
 from src.config.config import settings
 from src.models.base import engine
@@ -24,6 +25,14 @@ celery_app.conf.update(
         "fill-empty-tours": {
             "task": "tours.fill_empty",
             "schedule": settings.FILL_TOURS_INTERVAL,
+        },
+        "fill-points": {
+            "task": "points.fill",
+            "schedule": crontab(hour=settings.FILL_POINTS_HOUR, minute=0),
+        },
+        "sync-tours-players": {
+            "task": "tours.sync_players",
+            "schedule": crontab(hour=settings.SYNC_TOURS_HOUR, minute=0),
         },
     },
 )

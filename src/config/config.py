@@ -19,6 +19,10 @@ class Settings(BaseSettings):
     RABBITMQ_VHOST: str = os.environ.get("APP_RABBITMQ_VHOST", "/")
     # как часто периодическая задача ищет незаполненные турниры, секунды
     FILL_TOURS_INTERVAL: int = int(os.environ.get("APP_FILL_TOURS_INTERVAL", 300))
+    # час суток (UTC), когда задача обновляет очки игроков
+    FILL_POINTS_HOUR: int = int(os.environ.get("APP_FILL_POINTS_HOUR", 3))
+    # час суток (UTC), когда сверяются составы предстоящих турниров
+    SYNC_TOURS_HOUR: int = int(os.environ.get("APP_SYNC_TOURS_HOUR", 4))
 
     @property
     def CELERY_BROKER_URL(self) -> str:

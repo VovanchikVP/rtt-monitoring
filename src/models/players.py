@@ -8,6 +8,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
 
@@ -35,6 +36,8 @@ class Players(Base):
 
 class Points(Base):
     __tablename__ = "points"
+    # защита от гонки: за один день по игроку не больше одной записи
+    __table_args__ = (UniqueConstraint("players_id", "date", name="uq_points_player_date"),)
 
     id = Column(UUID, primary_key=True, index=True, default=uuid.uuid4)
     players_id = Column(BigInteger, ForeignKey("players.id"), index=True, nullable=False)
