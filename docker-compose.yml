@@ -1,3 +1,20 @@
+x-app-env: &app-env
+  APP_DB_USER: ${APP_DB_USER:-rtt}
+  APP_DB_PASSWORD: ${APP_DB_PASSWORD:-rtt}
+  APP_DB_HOST: db
+  APP_DB_NAME: ${APP_DB_NAME:-rtt}
+  APP_RABBITMQ_HOST: rabbitmq
+  APP_RABBITMQ_PORT: 5672
+  APP_RABBITMQ_USER: ${APP_RABBITMQ_USER:-rtt}
+  APP_RABBITMQ_PASSWORD: ${APP_RABBITMQ_PASSWORD:-rtt}
+  APP_FILL_TOURS_INTERVAL: ${APP_FILL_TOURS_INTERVAL:-300}
+
+x-app-depends: &app-depends
+  db:
+    condition: service_healthy
+  rabbitmq:
+    condition: service_healthy
+
 services:
   db:
     image: postgres:17-alpine
@@ -14,23 +31,63 @@ services:
       retries: 10
     restart: unless-stopped
 
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${APP_RABBITMQ_USER:-rtt}
+      RABBITMQ_DEFAULT_PASS: ${APP_RABBITMQ_PASSWORD:-rtt}
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+      - ./docker/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/10-celery.conf:ro
+    ports:
+      # веб-интерфейс управления
+      - "${APP_RABBITMQ_UI_PORT:-15672}:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
   api:
     build: .
-    environment:
-      APP_DB_USER: ${APP_DB_USER:-rtt}
-      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-rtt}
-      APP_DB_HOST: db
-      APP_DB_NAME: ${APP_DB_NAME:-rtt}
+    environment: *app-env
     # миграции накатываются перед стартом приложения
     command: >
       sh -c "alembic upgrade head &&
              uvicorn app:app --host 0.0.0.0 --port 8000"
     ports:
       - "${APP_PORT:-8000}:8000"
-    depends_on:
-      db:
-        condition: service_healthy
+    depends_on: *app-depends
+    restart: unless-stopped
+
+  worker:
+    build: .
+    environment: *app-env
+    command: celery -A src.celery.app:celery_app worker --loglevel=info
+    # healthcheck из образа проверяет HTTP, воркеру он не подходит
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A src.celery.app:celery_app inspect ping -d celery@$$HOSTNAME"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
+    depends_on: *app-depends
+    restart: unless-stopped
+
+  beat:
+    build: .
+    environment: *app-env
+    # файл расписания пишется в домашний каталог: /app принадлежит root
+    command: >
+      celery -A src.celery.app:celery_app beat --loglevel=info
+      --schedule /home/app/celerybeat-schedule
+    healthcheck:
+      disable: true
+    depends_on: *app-depends
     restart: unless-stopped
 
 volumes:
   postgres_data:
+  rabbitmq_data:

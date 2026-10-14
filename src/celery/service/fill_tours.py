@@ -29,6 +29,7 @@ async def fill_empty_tours() -> None:
             try:
                 await fill_tour(http, tour_id)
             except Exception:
+                # один сбойный турнир не должен ронять остальные
                 logger.exception("Не удалось заполнить турнир %s", tour_id)
 
 

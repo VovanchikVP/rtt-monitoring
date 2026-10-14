@@ -22,3 +22,6 @@ Dockerfile
 .dockerignore
 docker-compose.yml
 README*
+celerybeat-schedule*
+celerybeat.pid
+docker/
