@@ -1,0 +1,36 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${APP_DB_USER:-rtt}
+      POSTGRES_PASSWORD: ${APP_DB_PASSWORD:-rtt}
+      POSTGRES_DB: ${APP_DB_NAME:-rtt}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${APP_DB_USER:-rtt} -d ${APP_DB_NAME:-rtt}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  api:
+    build: .
+    environment:
+      APP_DB_USER: ${APP_DB_USER:-rtt}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:-rtt}
+      APP_DB_HOST: db
+      APP_DB_NAME: ${APP_DB_NAME:-rtt}
+    # миграции накатываются перед стартом приложения
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
