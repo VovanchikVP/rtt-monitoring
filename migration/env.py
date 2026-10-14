@@ -1,11 +1,12 @@
-from logging.config import fileConfig
 import asyncio
-from sqlalchemy import pool
+from logging.config import fileConfig
 
 from alembic import context
+from sqlalchemy import pool
 from sqlalchemy.engine import Connection
-from src.config.config import settings
 from sqlalchemy.ext.asyncio import async_engine_from_config
+
+from src.config.config import settings
 from src.models import *
 
 # this is the Alembic Config object, which provides
@@ -101,4 +102,3 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     run_migrations_online()
-

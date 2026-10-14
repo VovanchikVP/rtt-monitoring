@@ -1,8 +1,10 @@
 import asyncio
+
 import aiohttp
+
 from src.const import TOUR_ID
-from src.service import fetch_tour_players, get_player_ids, get_player_data
 from src.plyer import fetch_rating_details
+from src.service import fetch_tour_players, get_player_data, get_player_ids
 
 
 async def main():

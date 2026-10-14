@@ -1,13 +1,13 @@
 import uuid
 
 from sqlalchemy import (
+    UUID,
+    BigInteger,
     Column,
     Date,
-    String,
-    BigInteger,
-    UUID,
     ForeignKey,
     Integer,
+    String,
 )
 from sqlalchemy.orm import relationship
 
@@ -34,12 +34,9 @@ class Players(Base):
 
 
 class Points(Base):
-
     __tablename__ = "points"
 
     id = Column(UUID, primary_key=True, index=True, default=uuid.uuid4)
     players_id = Column(BigInteger, ForeignKey("players.id"), index=True, nullable=False)
     date = Column(Date, nullable=False)
     points = Column(Integer, nullable=False)
-
-

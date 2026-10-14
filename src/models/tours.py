@@ -1,16 +1,15 @@
 from sqlalchemy import (
+    BigInteger,
     Column,
     Date,
-    String,
-    BigInteger,
-    Integer,
     ForeignKey,
+    Integer,
+    String,
     Table,
 )
 from sqlalchemy.orm import relationship
 
 from src.models.base import Base
-
 
 # связь многие-ко-многим: турнир <-> участники
 tours_players = Table(

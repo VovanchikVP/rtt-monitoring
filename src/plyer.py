@@ -1,5 +1,7 @@
 import time
+
 import aiohttp
+
 from src.const import API_URL, HEADERS
 
 
@@ -45,4 +47,5 @@ async def main():
 
 if __name__ == "__main__":
     import asyncio
+
     asyncio.run(main())
