@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+
+jobs:
+  lint:
+    name: Линтеры и форматтер
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установить uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Поставить зависимости
+        run: uv sync --frozen
+
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: ruff format
+        run: uv run ruff format --check .
+
+      - name: Проверить, что приложение импортируется
+        env:
+          APP_DB_USER: ci
+          APP_DB_PASSWORD: ci
+          APP_DB_HOST: localhost
+          APP_DB_NAME: ci
+        run: uv run python -c "import app, src.celery.tasks"
+
+  manifests:
+    name: Манифесты k8s
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Собрать kustomize-оверлеи
+        run: |
+          kubectl kustomize ci/app > /dev/null
+          kubectl kustomize ci/rabbitmq > /dev/null

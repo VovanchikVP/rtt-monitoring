@@ -1,0 +1,14 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: rtt
+resources:
+  - 10-configmap.yaml
+  - 20-migrate-job.yaml
+  - 30-api.yaml
+  - 40-worker.yaml
+  - 50-beat.yaml
+images:
+  # тег подставляет пайплайн: kustomize edit set image rtt-monitoring=<образ>
+  - name: rtt-monitoring
+    newName: ghcr.io/OWNER/rtt-monitoring
+    newTag: latest

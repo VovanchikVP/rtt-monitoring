@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rtt-worker
+  namespace: rtt
+  labels:
+    app: rtt-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rtt-worker
+  template:
+    metadata:
+      labels:
+        app: rtt-worker
+    spec:
+      containers:
+        - name: worker
+          image: rtt-monitoring
+          args:
+            - celery
+            - -A
+            - src.celery.app:celery_app
+            - worker
+            - --loglevel=info
+          env:
+            # учётные данные брокера берём из того же секрета, что и сам RabbitMQ,
+            # чтобы они не разъезжались между инфраструктурой и приложением
+            - name: APP_RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq
+                  key: username
+            - name: APP_RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq
+                  key: password
+          envFrom:
+            - configMapRef:
+                name: rtt-config
+            - secretRef:
+                name: rtt-secrets
+          readinessProbe:
+            exec:
+              command:
+                - sh
+                - -c
+                - celery -A src.celery.app:celery_app inspect ping -d celery@$HOSTNAME
+            initialDelaySeconds: 20
+            periodSeconds: 30
+            timeoutSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi

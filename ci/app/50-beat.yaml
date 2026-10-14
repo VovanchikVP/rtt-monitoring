@@ -1,0 +1,56 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rtt-beat
+  namespace: rtt
+  labels:
+    app: rtt-beat
+spec:
+  # планировщик должен быть ровно один, иначе задачи задвоятся
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: rtt-beat
+  template:
+    metadata:
+      labels:
+        app: rtt-beat
+    spec:
+      containers:
+        - name: beat
+          image: rtt-monitoring
+          args:
+            - celery
+            - -A
+            - src.celery.app:celery_app
+            - beat
+            - --loglevel=info
+            # /app принадлежит root, файл расписания пишем в домашний каталог
+            - --schedule=/home/app/celerybeat-schedule
+          env:
+            # учётные данные брокера берём из того же секрета, что и сам RabbitMQ,
+            # чтобы они не разъезжались между инфраструктурой и приложением
+            - name: APP_RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq
+                  key: username
+            - name: APP_RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq
+                  key: password
+          envFrom:
+            - configMapRef:
+                name: rtt-config
+            - secretRef:
+                name: rtt-secrets
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi

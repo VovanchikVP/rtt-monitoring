@@ -1,0 +1,20 @@
+# Несекретные настройки приложения. База и брокер подняты отдельно —
+# здесь только адреса, по которым к ним обращаться.
+# Логин и пароль брокера приходят из секрета `rabbitmq`,
+# пароль базы — из секрета `rtt-secrets` (см. README в этой директории).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rtt-config
+  namespace: rtt
+data:
+  APP_DB_HOST: postgres.rtt.svc.cluster.local
+  APP_DB_NAME: rtt
+  APP_DB_USER: rtt
+  APP_RABBITMQ_HOST: rabbitmq.rtt.svc.cluster.local
+  APP_RABBITMQ_PORT: "5672"
+  APP_RABBITMQ_VHOST: "/"
+  # периодические задачи
+  APP_FILL_TOURS_INTERVAL: "300"
+  APP_FILL_POINTS_HOUR: "3"
+  APP_SYNC_TOURS_HOUR: "4"

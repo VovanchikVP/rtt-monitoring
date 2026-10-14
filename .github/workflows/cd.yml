@@ -1,0 +1,98 @@
+name: CD
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    name: Сборка и публикация образа
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Имя образа в нижнем регистре
+        id: meta
+        run: echo "image=${REGISTRY}/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Логин в GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Собрать и запушить
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          # ноды k3s обычно x86, а сборка может идти на другой архитектуре
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image }}:${{ github.sha }}
+            ${{ steps.meta.outputs.image }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Выкатка в k3s
+    needs: build
+    runs-on: ubuntu-latest
+    # окружение даёт возможность повесить ручное подтверждение и хранить переменные
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-kubectl@v4
+
+      - name: Установить kustomize
+        run: |
+          version=v5.5.0
+          curl -sSLo kustomize.tar.gz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${version}/kustomize_${version}_linux_amd64.tar.gz"
+          tar -xzf kustomize.tar.gz
+          sudo install kustomize /usr/local/bin/kustomize
+
+      - name: Подложить kubeconfig
+        run: |
+          mkdir -p ~/.kube
+          echo "${{ secrets.KUBE_CONFIG }}" | base64 -d > ~/.kube/config
+          chmod 600 ~/.kube/config
+          kubectl version --output=yaml
+
+      - name: Подставить тег образа
+        working-directory: ci/app
+        run: kustomize edit set image rtt-monitoring=${{ needs.build.outputs.image }}:${{ github.sha }}
+
+      - name: Накатить миграции
+        run: |
+          # Job неизменяем — пересоздаём его под новый образ
+          kubectl -n rtt delete job rtt-migrate --ignore-not-found --wait=true
+          kustomize build ci/app | kubectl apply -f -
+          kubectl -n rtt wait --for=condition=complete job/rtt-migrate --timeout=300s
+
+      - name: Логи миграции при сбое
+        if: failure()
+        run: kubectl -n rtt logs job/rtt-migrate --tail=100
+
+      - name: Дождаться выкатки
+        run: |
+          for d in rtt-api rtt-worker rtt-beat; do
+            kubectl -n rtt rollout status deployment/$d --timeout=300s
+          done
+
+      - name: Состояние после выкатки
+        if: always()
+        run: kubectl -n rtt get pods -o wide
