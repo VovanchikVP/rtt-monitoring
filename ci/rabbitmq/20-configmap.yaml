@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rabbitmq-config
+  namespace: rtt
+data:
+  10-celery.conf: |
+    # Celery объявляет служебную очередь удалённого управления (pidbox) как
+    # transient non-exclusive. С RabbitMQ 4.2 такие очереди по умолчанию запрещены,
+    # и воркер падает на Queue.declare с INTERNAL_ERROR (541).
+    deprecated_features.permit.transient_nonexcl_queues = true
