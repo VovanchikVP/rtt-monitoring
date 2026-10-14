@@ -1,6 +1,13 @@
+import logging
+
 from fastapi import FastAPI
 
 from src.api.tours import router as tours_router
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 
 app = FastAPI(title="RTT monitoring")
 app.include_router(tours_router)

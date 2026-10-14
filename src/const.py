@@ -13,3 +13,6 @@ HEADERS = {
 RATING_FIELD = datetime.date.today().strftime("%Y%m011")
 
 TOUR_ID = 307095
+
+# таймаут запросов к внешнему API, секунды
+HTTP_TIMEOUT = 15
