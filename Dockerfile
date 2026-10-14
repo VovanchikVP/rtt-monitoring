@@ -32,7 +32,7 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --chown=app:app alembic.ini ./
 COPY --chown=app:app migration ./migration
 COPY --chown=app:app src ./src
-COPY --chown=app:app app.py main.py ./
+COPY --chown=app:app app.py ./
 
 USER app
 
