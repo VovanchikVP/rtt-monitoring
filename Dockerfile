@@ -33,6 +33,7 @@ COPY --chown=app:app alembic.ini ./
 COPY --chown=app:app migration ./migration
 COPY --chown=app:app src ./src
 COPY --chown=app:app app.py ./
+COPY --chown=app:app static ./static
 
 USER app
 

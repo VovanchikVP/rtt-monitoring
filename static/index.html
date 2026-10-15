@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RTT monitoring</title>
+  <style>
+    :root {
+      --bg: #f6f7f9;
+      --card: #ffffff;
+      --text: #1c1f23;
+      --muted: #6b7280;
+      --line: #e3e6ea;
+      --accent: #2f6feb;
+      --danger: #c0392b;
+      --pending: #b45309;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #16181c;
+        --card: #1e2126;
+        --text: #e8eaed;
+        --muted: #9aa0a6;
+        --line: #2c3036;
+        --accent: #6ea0ff;
+        --danger: #ef6a5a;
+        --pending: #e0a44a;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 24px 16px 48px;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .wrap { max-width: 980px; margin: 0 auto; }
+    h1 { font-size: 20px; margin: 0 0 4px; }
+    .sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    input, button {
+      font: inherit;
+      border-radius: 7px;
+      border: 1px solid var(--line);
+      padding: 8px 12px;
+      background: var(--card);
+      color: var(--text);
+    }
+    input { width: 180px; }
+    button { cursor: pointer; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    button.link {
+      border: none; background: none; color: var(--accent); padding: 4px 6px;
+    }
+    button.link.danger { color: var(--danger); }
+    button:disabled { opacity: .5; cursor: default; }
+    .msg { margin-top: 10px; font-size: 13px; min-height: 18px; }
+    .msg.error { color: var(--danger); }
+    .msg.ok { color: var(--muted); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+    th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+    td.num, th.num { text-align: right; white-space: nowrap; }
+    tr.selected td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+    .pending { color: var(--pending); }
+    .empty { color: var(--muted); padding: 12px 2px; }
+    .head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+    .head h2 { font-size: 15px; margin: 0; }
+    .status { font-size: 12px; color: var(--muted); }
+    .dot {
+      display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+      background: var(--pending); margin-right: 6px; vertical-align: middle;
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .25 } }
+    .wide { overflow-x: auto; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>RTT monitoring</h1>
+  <div class="sub">Турниры и рейтинговые очки участников</div>
+
+  <div class="card">
+    <form class="row" id="add-form">
+      <input id="tour-id" inputmode="numeric" placeholder="ID турнира" required>
+      <button class="primary" type="submit">Добавить</button>
+    </form>
+    <div class="msg" id="add-msg"></div>
+  </div>
+
+  <div class="card">
+    <div class="head">
+      <h2>Турниры</h2>
+      <span class="status" id="tours-status"></span>
+    </div>
+    <div class="wide"><table id="tours">
+      <thead>
+        <tr>
+          <th class="num">ID</th><th>Название</th><th>Город</th>
+          <th>Даты</th><th class="num">Участников</th><th></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table></div>
+    <div class="empty" id="tours-empty" hidden>Пока ни одного турнира</div>
+  </div>
+
+  <div class="card" id="players-card" hidden>
+    <div class="head">
+      <h2 id="players-title">Участники</h2>
+      <span class="status" id="players-status"></span>
+    </div>
+    <div class="wide"><table id="players">
+      <thead>
+        <tr>
+          <th class="num">#</th><th>Игрок</th><th class="num">Возраст</th>
+          <th>Город</th><th class="num">Очки</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table></div>
+  </div>
+</div>
+
+<script>
+  const POLL_MS = 3000;
+  let pollTimer = null;
+  let selectedTour = null;
+
+  const $ = (id) => document.getElementById(id);
+  const fmtDate = (d) => d ? d.split('-').reverse().join('.') : null;
+
+  function tourDates(t) {
+    const from = fmtDate(t.begin_date), to = fmtDate(t.end_date);
+    if (from && to) return `${from} — ${to}`;
+    return from || to || '';
+  }
+
+  // турнир считается незаполненным, пока фоновая задача не подтянула карточку
+  const isPending = (t) => t.name === null;
+
+  function renderTours(tours) {
+    const tbody = $('tours').querySelector('tbody');
+    tbody.innerHTML = '';
+    $('tours-empty').hidden = tours.length > 0;
+    $('tours').hidden = tours.length === 0;
+
+    for (const t of tours) {
+      const tr = document.createElement('tr');
+      if (t.id === selectedTour) tr.className = 'selected';
+
+      const name = isPending(t)
+        ? '<span class="pending">заполняется…</span>'
+        : escape(t.name);
+
+      tr.innerHTML = `
+        <td class="num">${t.id}</td>
+        <td>${name}</td>
+        <td>${escape(t.location) || ''}</td>
+        <td>${tourDates(t)}</td>
+        <td class="num">${t.players_count}</td>
+        <td class="num">
+          <button class="link" data-players="${t.id}">участники</button>
+          <button class="link danger" data-delete="${t.id}">удалить</button>
+        </td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  function escape(s) {
+    if (s === null || s === undefined) return '';
+    return String(s).replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+    ));
+  }
+
+  async function loadTours() {
+    const resp = await fetch('/tours');
+    if (!resp.ok) throw new Error(`GET /tours → ${resp.status}`);
+    const tours = await resp.json();
+    renderTours(tours);
+
+    // опрос нужен, только пока есть незаполненные турниры
+    const pending = tours.filter(isPending).length;
+    if (pending > 0) {
+      $('tours-status').innerHTML =
+        `<span class="dot"></span>ждём данные по ${pending} ${plural(pending)}`;
+      schedulePoll();
+    } else {
+      stopPoll();
+      $('tours-status').textContent = '';
+    }
+    return tours;
+  }
+
+  function plural(n) {
+    const t = n % 10, h = n % 100;
+    if (t === 1 && h !== 11) return 'турниру';
+    return 'турнирам';
+  }
+
+  function schedulePoll() {
+    if (pollTimer !== null) return;         // опрос уже запущен
+    pollTimer = setTimeout(async () => {
+      pollTimer = null;
+      try {
+        await loadTours();
+        if (selectedTour !== null) await loadPlayers(selectedTour, true);
+      } catch (e) {
+        $('tours-status').textContent = 'нет связи с сервером, пробуем ещё раз';
+        schedulePoll();
+      }
+    }, POLL_MS);
+  }
+
+  function stopPoll() {
+    if (pollTimer !== null) {
+      clearTimeout(pollTimer);
+      pollTimer = null;
+    }
+  }
+
+  async function loadPlayers(tourId, silent = false) {
+    if (!silent) $('players-status').textContent = 'загружаем…';
+    const resp = await fetch(`/tours/${tourId}/players`);
+    if (resp.status === 404) { closePlayers(); return; }
+    if (!resp.ok) throw new Error(`GET players → ${resp.status}`);
+    const players = await resp.json();
+
+    selectedTour = tourId;
+    location.hash = `tour=${tourId}`;   // состав можно открыть по прямой ссылке
+    $('players-card').hidden = false;
+    $('players-title').textContent = `Участники турнира ${tourId}`;
+    $('players-status').textContent = players.length
+      ? `${players.length} чел.`
+      : 'состав ещё не загружен';
+
+    const tbody = $('players').querySelector('tbody');
+    tbody.innerHTML = '';
+    for (const p of players) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="num">${p.number}</td>
+        <td>${escape(p.name)}</td>
+        <td class="num">${p.age ?? '—'}</td>
+        <td>${escape(p.city)}</td>
+        <td class="num">${p.points}</td>`;
+      tbody.appendChild(tr);
+    }
+  }
+
+  function closePlayers() {
+    selectedTour = null;
+    if (location.hash) history.replaceState(null, '', location.pathname);
+    $('players-card').hidden = true;
+  }
+
+  function tourFromHash() {
+    const m = location.hash.match(/^#tour=(\d+)$/);
+    return m ? Number(m[1]) : null;
+  }
+
+  $('add-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const msg = $('add-msg');
+    const id = Number($('tour-id').value.trim());
+    if (!Number.isInteger(id) || id <= 0) {
+      msg.className = 'msg error';
+      msg.textContent = 'ID турнира — целое положительное число';
+      return;
+    }
+
+    msg.className = 'msg ok';
+    msg.textContent = 'отправляем…';
+    try {
+      const resp = await fetch('/tours', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      if (resp.status === 201) {
+        msg.className = 'msg ok';
+        msg.textContent = `Турнир ${id} добавлен, данные подтянутся сами`;
+        $('tour-id').value = '';
+        await loadTours();
+      } else {
+        const body = await resp.json().catch(() => ({}));
+        msg.className = 'msg error';
+        msg.textContent = detail(body) || `Ошибка ${resp.status}`;
+      }
+    } catch (e) {
+      msg.className = 'msg error';
+      msg.textContent = 'Не удалось отправить запрос';
+    }
+  });
+
+  function detail(body) {
+    if (typeof body.detail === 'string') return body.detail;
+    if (Array.isArray(body.detail)) return body.detail[0]?.msg;
+    return null;
+  }
+
+  document.addEventListener('click', async (e) => {
+    const openId = e.target.dataset?.players;
+    const delId = e.target.dataset?.delete;
+
+    if (openId) {
+      await loadPlayers(Number(openId));
+      await loadTours();
+    }
+
+    if (delId) {
+      if (!confirm(`Удалить турнир ${delId}?`)) return;
+      const resp = await fetch(`/tours/${delId}`, { method: 'DELETE' });
+      if (resp.ok && Number(delId) === selectedTour) closePlayers();
+      await loadTours();
+    }
+  });
+
+  // при уходе со вкладки опрос не нужен
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) stopPoll();
+    else loadTours().catch(() => {});
+  });
+
+  (async () => {
+    try {
+      await loadTours();
+      const fromHash = tourFromHash();
+      if (fromHash !== null) await loadPlayers(fromHash);
+    } catch (e) {
+      $('tours-status').textContent = 'нет связи с сервером';
+      schedulePoll();
+    }
+  })();
+</script>
+</body>
+</html>
