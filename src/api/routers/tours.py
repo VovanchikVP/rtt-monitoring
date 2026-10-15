@@ -7,7 +7,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from celery import chain
-from src.api.schemas import TourCreate, TourPlayerRead, TourRead
+from src.api.schemas import TourCreate, TourListRead, TourPlayerRead, TourRead
 from src.celery.tasks import fill_empty_tours_task, fill_points_task
 from src.models import Players, Points, Tours, tours_players
 from src.models.base import get_session
@@ -17,6 +17,30 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/tours", tags=["tours"])
 
 SessionDep = Annotated[AsyncSession, Depends(get_session)]
+
+
+@router.get("", response_model=list[TourListRead])
+async def get_tours(session: SessionDep) -> list[TourListRead]:
+    """Список отслеживаемых турниров, ближайшие сверху."""
+    players_count = (
+        select(func.count())
+        .select_from(tours_players)
+        .where(tours_players.c.tour_id == Tours.id)
+        .scalar_subquery()
+        .label("players_count")
+    )
+
+    rows = await session.execute(
+        select(
+            Tours.id,
+            Tours.name,
+            Tours.location,
+            Tours.begin_date,
+            Tours.end_date,
+            players_count,
+        ).order_by(Tours.begin_date.asc().nulls_last(), Tours.id)
+    )
+    return [TourListRead.model_validate(row) for row in rows]
 
 
 @router.post("", response_model=TourRead, status_code=status.HTTP_201_CREATED)

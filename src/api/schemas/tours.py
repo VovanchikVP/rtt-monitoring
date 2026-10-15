@@ -21,6 +21,12 @@ class TourRead(BaseModel):
     end_date: date | None = None
 
 
+class TourListRead(TourRead):
+    """Турнир в общем списке — с числом участников."""
+
+    players_count: int = Field(default=0, description="Участников в базе")
+
+
 class TourPlayerRead(BaseModel):
     """Участник турнира в итоговом списке."""
 

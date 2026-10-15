@@ -2,7 +2,7 @@ import logging
 
 from fastapi import FastAPI
 
-from src.api.tours import router as tours_router
+from src.api.routers import tours_router
 
 logging.basicConfig(
     level=logging.INFO,
