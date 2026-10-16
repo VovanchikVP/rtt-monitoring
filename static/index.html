@@ -147,6 +147,9 @@
   const POLL_MS = 3000;
   let pollTimer = null;
   let selectedTour = null;
+  // карточки турниров из последнего ответа /tours: нужны заголовку состава,
+  // в /tours/{id}/players названия турнира нет
+  const toursById = new Map();
 
   const $ = (id) => document.getElementById(id);
   const fmtDate = (d) => d ? d.split('-').reverse().join('.') : null;
@@ -212,6 +215,8 @@
     const resp = await fetch('/tours');
     if (!resp.ok) throw new Error(`GET /tours → ${resp.status}`);
     const tours = await resp.json();
+    toursById.clear();
+    for (const t of tours) toursById.set(t.id, t);
     renderTours(tours);
 
     // опрос нужен, только пока есть незаполненные турниры
@@ -264,7 +269,11 @@
     selectedTour = tourId;
     location.hash = `tour=${tourId}`;   // состав можно открыть по прямой ссылке
     $('players-card').hidden = false;
-    $('players-title').textContent = `Участники турнира ${tourId}`;
+    // пока карточка не заполнена, названия ещё нет — показываем id
+    const name = toursById.get(tourId)?.name;
+    $('players-title').textContent = name
+      ? `Участники — ${name}`
+      : `Участники турнира ${tourId}`;
     $('players-status').textContent = players.length
       ? `${players.length} чел.`
       : 'состав ещё не загружен';
