@@ -86,6 +86,7 @@ curl -X POST localhost:8000/tours -H 'Content-Type: application/json' -d '{"id":
 | `tours.fill_empty` | после `POST /tours` и каждые `FILL_TOURS_INTERVAL` секунд | находит турниры без данных, тянет карточку, добавляет игроков и связи |
 | `points.fill` | следом за `tours.fill_empty` и раз в сутки в `FILL_POINTS_HOUR` | добирает очки игрокам, у которых нет записи за текущий месяц |
 | `tours.sync_players` | раз в сутки в `SYNC_TOURS_HOUR` | сверяет составы ещё не начавшихся турниров: добавляет недостающих, убирает лишние связи |
+| `tours.search` | раз в сутки в `SEARCH_TOURS_HOUR` | ищет турниры по фильтрам из `search_settings` и ставит на отслеживание новые |
 
 Задачи идемпотентны: повторный запуск не создаёт дублей. Старые записи об
 очках не удаляются — копится история, по одной записи на игрока в месяц.
@@ -112,6 +113,7 @@ curl -X POST localhost:8000/tours -H 'Content-Type: application/json' -d '{"id":
 | `APP_FILL_TOURS_INTERVAL` | `300` | период поиска незаполненных турниров, секунды |
 | `APP_FILL_POINTS_HOUR` | `3` | час UTC для обновления очков |
 | `APP_SYNC_TOURS_HOUR` | `4` | час UTC для сверки составов |
+| `APP_SEARCH_TOURS_HOUR` | `5` | час UTC для автоматического поиска турниров |
 
 ## Структура
 

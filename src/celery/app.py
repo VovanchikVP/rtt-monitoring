@@ -34,6 +34,10 @@ celery_app.conf.update(
             "task": "tours.sync_players",
             "schedule": crontab(hour=settings.SYNC_TOURS_HOUR, minute=0),
         },
+        "search-tours": {
+            "task": "tours.search",
+            "schedule": crontab(hour=settings.SEARCH_TOURS_HOUR, minute=0),
+        },
     },
 )
 
