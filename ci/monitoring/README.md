@@ -7,7 +7,7 @@ Prometheus хранит метрики и логи хранить не умее�
 |---|---|---|
 | **Loki** | хранилище логов, аналог Prometheus для текста | `monitoring`, один под |
 | **Grafana Alloy** | сборщик: читает логи подов с ноды и шлёт в Loki | `monitoring`, DaemonSet |
-| **Grafana** | просмотр; скорее всего уже стоит вместе с Prometheus | — |
+| **Grafana** | просмотр | `monitoring`, манифесты в этом каталоге |
 
 ```
 поды rtt ──логи на диск ноды──▶ /var/log/pods ──▶ Alloy (DaemonSet)
@@ -15,6 +15,23 @@ Prometheus хранит метрики и логи хранить не умее�
                                                     ▼
                               Grafana ◀──запросы── Loki (PVC)
 ```
+
+```
+ci/monitoring/
+  00-namespace.yaml   namespace monitoring
+  loki/               хранилище логов: конфиг, сервис, StatefulSet + PVC
+  alloy/              сборщик: RBAC, конфиг, DaemonSet
+  grafana/            просмотр: секрет, datasource'ы, сервис, PV/PVC, Deployment
+```
+
+Всё ставится одной командой, порядок kustomize разберёт сам:
+
+```bash
+kubectl apply -k ci/monitoring
+```
+
+Компоненты независимы — `kubectl apply -k ci/monitoring/loki` и так далее
+тоже работает, если namespace уже есть.
 
 > **Promtail не использовать.** С 2 марта 2026 он EOL, сбор логов переехал
 > в Grafana Alloy. Чарт `grafana/promtail` ещё лежит в репозитории, но новые
@@ -26,247 +43,228 @@ Prometheus хранит метрики и логи хранить не умее�
 kubectl get pods -A | grep -iE "grafana|prometheus|loki|alloy"
 ```
 
-Если Prometheus ставился чартом `kube-prometheus-stack`, Grafana уже есть
-в том же namespace (обычно `monitoring`) — отдельно её ставить не нужно.
+В кластере стоит `kube-prometheus-stack` (чарт раскатывается k3s-ным
+`HelmChart` из `kube-system`), но **с выключенной Grafana** — в `monitoring`
+живут только оператор, Prometheus, kube-state-metrics и node-exporter:
+
+```bash
+kubectl -n kube-system get helmchart kube-prometheus-stack \
+  -o jsonpath='{.spec.valuesContent}'
+```
+
+Поэтому Grafana поднимается отдельно, манифестами из этого каталога (раздел 3),
+и сама подключает к себе и Loki, и Prometheus от стека. Если когда-нибудь
+включите Grafana в чарте — свою нужно будет снести, иначе в namespace окажутся
+две.
+
 Дальше по тексту namespace считается `monitoring`, поправьте под свой.
 
 ## 1. Loki
 
-Чарт `loki` активно развивается в репозитории `grafana-community`
-(в старом `grafana/helm-charts` он заморожен на версии 7.3.0):
+```
+ci/monitoring/loki/
+  10-configmap.yaml     конфиг Loki
+  20-service.yaml       ClusterIP loki:3100 (http) и :9096 (grpc)
+  30-statefulset.yaml   один под + PVC на 10 Gi
+```
+
+Настройки чарта по умолчанию рассчитаны на объектное хранилище и кластер
+из многих нод. Здесь вместо этого монолитный режим (`-target=all`): все роли
+в одном процессе, чанки и индекс на диске, кольцо в памяти, один арендатор.
+Отдельные read/write/backend, memcached-кеши, gateway и canary не нужны —
+на одной ноде они только едят память.
+
+Что стоит знать про конфиг:
+
+| Настройка | Зачем |
+|---|---|
+| `auth_enabled: false` | один арендатор, Grafana и Alloy ходят без `X-Scope-OrgID` |
+| `limits_config.retention_period: 720h` | 30 дней; чистит compactor, он включён |
+| `limits_config.volume_enabled: true` | иначе в Grafana не работает панель Logs volume |
+| `ingestion_rate_mb: 8` | запас на всплески логов воркера, по умолчанию 4 |
+| `query_range.results_cache` | кеш внутри процесса вместо отдельного memcached |
+| `analytics.reporting_enabled: false` | кластер закрытый, наружу ходить незачем |
 
 ```bash
-helm repo add grafana-community https://grafana-community.github.io/helm-charts
-helm repo update
+kubectl apply -k ci/monitoring/loki
+kubectl -n monitoring rollout status statefulset/loki
 ```
 
-Значения по умолчанию рассчитаны на объектное хранилище и кластер из многих нод —
-для одной ноды k3s нужно явно включить монолитный режим, файловое хранилище
-и выключить всё лишнее (memcached-кеши, gateway, canary, тесты), иначе чарт
-поднимет десяток подов.
+Том — обычный `local-path` на 10 Gi, этого хватает примерно на 30 дней логов
+приложения. Если логов станет больше, Loki разумно переселить на тот же SSD
+по образцу `grafana/40-pv.yaml`: завести PV на `/data/loki` и заменить
+`volumeClaimTemplates` на готовый PVC.
 
-`ci/monitoring/loki-values.yaml`:
+Адрес для datasource и для Alloy — `http://loki.monitoring.svc.cluster.local:3100`.
 
-```yaml
-deploymentMode: Monolithic
-
-loki:
-  # один арендатор: Grafana сможет ходить без заголовка X-Scope-OrgID
-  auth_enabled: false
-  commonConfig:
-    replication_factor: 1
-  storage:
-    type: filesystem
-  schemaConfig:
-    configs:
-      - from: "2024-04-01"
-        store: tsdb
-        object_store: filesystem
-        schema: v13
-        index:
-          prefix: index_
-          period: 24h
-  limits_config:
-    retention_period: 720h          # 30 дней
-    volume_enabled: true
-    # запас на всплески логов воркера
-    ingestion_rate_mb: 8
-    ingestion_burst_size_mb: 16
-  compactor:
-    working_directory: /var/loki/compactor
-    retention_enabled: true
-    delete_request_store: filesystem
-
-singleBinary:
-  replicas: 1
-  persistence:
-    enabled: true
-    size: 10Gi
-    # storageClass: local-path      # в k3s по умолчанию local-path
-  resources:
-    requests:
-      cpu: 100m
-      memory: 256Mi
-    limits:
-      memory: 1Gi
-
-# нули обязательны: иначе чарт поднимет поды для распределённого режима
-read:
-  replicas: 0
-write:
-  replicas: 0
-backend:
-  replicas: 0
-
-# всё это не нужно на одной ноде и съедает память
-gateway:
-  enabled: false
-chunksCache:
-  enabled: false
-resultsCache:
-  enabled: false
-lokiCanary:
-  enabled: false
-test:
-  enabled: false
-```
+После правки конфига под нужно перекатить — StatefulSet сам изменений
+в ConfigMap не видит:
 
 ```bash
-helm upgrade --install loki grafana-community/loki \
-  -n monitoring --create-namespace \
-  -f ci/monitoring/loki-values.yaml
-
-kubectl -n monitoring get pods,svc,pvc | grep loki
+kubectl -n monitoring rollout restart statefulset/loki
 ```
 
-Адрес для datasource и для Alloy — сервис `loki` на порту 3100:
-`http://loki.monitoring.svc.cluster.local:3100`
-(проверьте имя: `kubectl -n monitoring get svc`).
+Проверка без Grafany:
+
+```bash
+kubectl -n monitoring port-forward svc/loki 3100:3100
+curl -s 'http://localhost:3100/loki/api/v1/labels'
+```
+
+> **Promtail не использовать.** С 2 марта 2026 он EOL, сбор логов переехал
+> в Grafana Alloy.
 
 ## 2. Alloy — сбор логов
 
-```bash
-helm repo add grafana https://grafana.github.io/helm-charts
-helm repo update
 ```
-
-`ci/monitoring/alloy-values.yaml`:
-
-```yaml
-controller:
-  type: daemonset
-
-alloy:
-  # доступ к /var/log/pods на ноде, где лежат логи контейнеров
-  mounts:
-    varlog: true
-  resources:
-    requests:
-      cpu: 50m
-      memory: 128Mi
-    limits:
-      memory: 256Mi
-  configMap:
-    content: |-
-      discovery.kubernetes "pods" {
-        role = "pod"
-      }
-
-      discovery.relabel "pods" {
-        targets = discovery.kubernetes.pods.targets
-
-        // метки, по которым потом фильтруем в Grafana
-        rule {
-          source_labels = ["__meta_kubernetes_namespace"]
-          target_label  = "namespace"
-        }
-        rule {
-          source_labels = ["__meta_kubernetes_pod_label_app"]
-          target_label  = "app"
-        }
-        rule {
-          source_labels = ["__meta_kubernetes_pod_name"]
-          target_label  = "pod"
-        }
-        rule {
-          source_labels = ["__meta_kubernetes_pod_container_name"]
-          target_label  = "container"
-        }
-
-        // путь к файлу логов контейнера на ноде
-        rule {
-          source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
-          separator     = "/"
-          action        = "replace"
-          replacement   = "/var/log/pods/*$1/*.log"
-          target_label  = "__path__"
-        }
-      }
-
-      local.file_match "pods" {
-        path_targets = discovery.relabel.pods.output
-      }
-
-      loki.source.file "pods" {
-        targets    = local.file_match.pods.targets
-        forward_to = [loki.process.pods.receiver]
-      }
-
-      loki.process "pods" {
-        // снять обёртку формата CRI: время, поток, флаг многострочности
-        stage.cri {}
-
-        // текущий формат приложения: "2026-10-16 07:12:03,123 INFO src.module: текст"
-        stage.regex {
-          expression = "^\\S+ \\S+ (?P<level>[A-Z]+) (?P<logger>\\S+): "
-        }
-        stage.labels {
-          values = {
-            level = "level",
-          }
-        }
-
-        forward_to = [loki.write.default.receiver]
-      }
-
-      loki.write "default" {
-        endpoint {
-          url = "http://loki.monitoring.svc.cluster.local:3100/loki/api/v1/push"
-        }
-      }
+ci/monitoring/alloy/
+  10-rbac.yaml       ServiceAccount + ClusterRole на чтение подов
+  20-configmap.yaml  config.alloy: что собирать и куда слать
+  30-daemonset.yaml  по поду на каждую ноду
 ```
 
 ```bash
-helm upgrade --install alloy grafana/alloy \
-  -n monitoring -f ci/monitoring/alloy-values.yaml
-
+kubectl apply -k ci/monitoring/alloy
+kubectl -n monitoring rollout status daemonset/alloy
 kubectl -n monitoring logs ds/alloy | tail -20
 ```
 
-RBAC на чтение подов чарт создаёт сам (`rbac.create: true` по умолчанию).
+Как это работает: `discovery.kubernetes` берёт список подов из API,
+`discovery.relabel` превращает каждый под в путь к файлу логов на ноде
+(`/var/log/pods/*<uid>/<container>/*.log`) и проставляет метки,
+`loki.source.file` читает файлы, `loki.process` разбирает строки,
+`loki.write` шлёт в Loki.
 
-Если нужны логи только приложения, а не всего кластера, добавьте в
-`discovery.relabel "pods"` отсев по namespace:
+Поды ищутся по всему кластеру, а файлы есть только для локальных — цели
+с чужих нод просто не находятся, фильтровать по ноде не нужно. Чтобы собирать
+логи только приложения, в `20-configmap.yaml` есть закомментированное правило
+`keep` по namespace `rtt`.
 
-```alloy
-rule {
-  source_labels = ["__meta_kubernetes_namespace"]
-  regex         = "rtt"
-  action        = "keep"
-}
-```
+Детали DaemonSet'а:
 
-## 3. Подключить Loki к Grafana
+- `runAsUser: 0` — файлы в `/var/log/pods` принадлежат root и читаются только им;
+- `/var/log` монтируется с ноды только на чтение;
+- `/var/lib/alloy` — hostPath, а не emptyDir: там лежат позиции чтения,
+  и после перезапуска пода логи дочитываются с места остановки, а не с начала;
+- `tolerations: Exists` — если на ноде k3s-сервера появятся тейнты,
+  сбор логов с неё не пропадёт.
 
-Если Grafana стоит из `kube-prometheus-stack`, её sidecar сам подхватывает
-datasource из ConfigMap с нужной меткой — манифест переживёт обновление чарта:
+UI Alloy с графом компонентов и их состоянием:
+`kubectl -n monitoring port-forward ds/alloy 12345:12345` → http://localhost:12345.
 
-```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: grafana-datasource-loki
-  namespace: monitoring
-  labels:
-    grafana_datasource: "1"
-data:
-  loki.yaml: |
-    apiVersion: 1
-    datasources:
-      - name: Loki
-        type: loki
-        access: proxy
-        url: http://loki.monitoring.svc.cluster.local:3100
-        isDefault: false
-```
+Правки конфига проверяются до выкатки, кластер для этого не нужен:
 
 ```bash
-kubectl apply -f ci/monitoring/grafana-datasource-loki.yaml
+docker run --rm -v "$PWD":/w grafana/alloy:v1.20.1 validate /w/config.alloy
 ```
 
-Альтернатива — добавить datasource руками: **Connections → Data sources → Loki**,
-URL тот же. Проверка: **Explore → Loki → Label browser**, должен появиться
-`namespace` со значением `rtt`.
+(файл `config.alloy` предварительно вынуть из ConfigMap в отдельный файл.)
+
+## 3. Grafana
+
+```
+ci/monitoring/grafana/
+  10-secret.yaml       логин/пароль администратора (значения тестовые)
+  20-configmap.yaml    datasource'ы Loki и Prometheus, provisioning при старте
+  30-service.yaml      ClusterIP grafana:80 → 3000
+  40-pv.yaml           том на SSD ноды 192.168.1.132, /data/grafana
+  50-pvc.yaml          заявка под SQLite-базу (дашборды, пользователи)
+  60-deployment.yaml   сама Grafana
+```
+
+### Диск
+
+У Grafany свой том — SSD, смонтированный в `/data/grafana` на ноде
+`192.168.1.132`. `local-path` в кластере остаётся как был, этот PV заведён
+руками и провиженера не касается: `storageClassName: ""` и в PV, и в заявке
+отключает динамическую выдачу, а `volumeName` + `claimRef` связывают их
+напрямую, так что посторонний PVC том не перехватит.
+
+Перед первой выкаткой подготовить каталог **на этой ноде**:
+
+```bash
+sudo mkdir -p /data/grafana
+sudo chown 472:472 /data/grafana   # uid 472 — пользователь grafana в образе
+sudo chmod 2775 /data/grafana      # setgid+g+rwx: kubelet не полезет chown'ить рекурсивно
+```
+
+И подставить в `grafana/40-pv.yaml` имя ноды: `nodeAffinity` сопоставляется
+по `kubernetes.io/hostname`, адрес там не подойдёт.
+
+```bash
+kubectl get nodes -o wide          # нужна строка с INTERNAL-IP 192.168.1.132
+```
+
+Привязка к ноде жёсткая: под Grafana запустится только там, и если нода
+недоступна, он останется в `Pending` — для одной реплики с локальным диском
+это неизбежно.
+
+`reclaimPolicy: Retain` — удаление PVC данные не трогает, PV остаётся
+в `Released` и новой заявке не отдаётся. Чтобы переиспользовать том,
+нужно снять с него ссылку на старую заявку:
+
+```bash
+kubectl patch pv grafana-data -p '{"spec":{"claimRef":null}}'
+```
+
+### Выкатка
+
+Перед ней поменяйте пароль в `grafana/10-secret.yaml` (или заведите секрет
+`grafana-admin` руками и уберите файл из `grafana/kustomization.yaml`):
+
+```bash
+kubectl apply -k ci/monitoring/grafana
+kubectl get pv grafana-data                          # Bound
+kubectl -n monitoring rollout status deployment/grafana
+```
+
+Вход: `kubectl -n monitoring port-forward svc/grafana 3000:80`, дальше
+http://localhost:3000 и учётные данные из секрета.
+
+Datasource заводится provisioning'ом — Grafana читает
+`/etc/grafana/provisioning/datasources` при старте, руками в UI ничего
+добавлять не нужно. После правки `grafana/20-configmap.yaml` поду нужен перезапуск:
+
+```bash
+kubectl -n monitoring rollout restart deployment/grafana
+```
+
+Тот же ConfigMap помечен `grafana_datasource: "1"`, поэтому если в чарте
+включат Grafana, её sidecar подхватит datasource'ы сам — свою Grafana тогда
+можно удалить.
+
+Проверка: **Explore → Loki → Label browser**, должен появиться `namespace`
+со значением `rtt`; **Explore → Prometheus** — метрики ноды и kube-state-metrics.
+
+Готовых дашбордов у этой Grafany нет: они идут в subchart'е, который выключен.
+Нужные берутся из **Dashboards → New → Import** по ID с grafana.com
+(1860 — Node Exporter Full, 15757 — Kubernetes / Views / Pods), для этого
+Grafane нужен доступ в интернет; либо импортом JSON-файла руками.
+
+### Доступ снаружи
+
+Через встроенный в k3s traefik, с правкой `GF_SERVER_ROOT_URL` в деплойменте
+на тот же адрес:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: grafana
+  namespace: monitoring
+spec:
+  rules:
+    - host: <ваш-домен>
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: grafana
+                port:
+                  number: 80
+```
 
 ## 4. Запросы, которые пригодятся сразу
 
@@ -342,9 +340,10 @@ Loki заводит отдельный поток на каждое сочета
 |---|---|---|
 | Loki | 256–512 Mi | PVC 10 Gi, хватает на ~30 дней логов этого приложения |
 | Alloy | 100–200 Mi на ноду | — |
+| Grafana | 128–512 Mi | 5 Gi на SSD ноды, реально занимает десятки мегабайт |
 
-Срок хранения правится в `limits_config.retention_period`; чистку делает
-compactor, он включён в значениях выше.
+Срок хранения правится в `limits_config.retention_period` (`loki/10-configmap.yaml`);
+чистку делает compactor, он включён.
 
 ## Что можно добавить дальше
 
@@ -353,5 +352,8 @@ compactor, он включён в значениях выше.
   Для celery — экспортер `danihodovic/celery-exporter`.
 - **Алерты по логам**: ruler в Loki умеет слать в тот же Alertmanager,
   что и Prometheus, — например, на `|= "Не удалось заполнить турнир"`.
-- **Один чарт вместо двух**: `grafana/k8s-monitoring` ставит и настраивает
-  Alloy под логи и метрики сам, но меньше контроля над конфигом.
+- **Метрики самих Loki и Alloy**: оператор `kube-prometheus-stack` уже стоит,
+  так что хватит `ServiceMonitor` на `loki:3100/metrics` и `alloy:12345/metrics`.
+- **Дашборды в git**: Grafana умеет забирать их provisioning'ом из ConfigMap'ов
+  так же, как datasource'ы, — тогда панели переживут пересоздание пода
+  и не будут жить только в SQLite.

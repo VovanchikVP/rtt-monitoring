@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: alloy
+  namespace: monitoring
+  labels:
+    app: alloy
+spec:
+  selector:
+    matchLabels:
+      app: alloy
+  template:
+    metadata:
+      labels:
+        app: alloy
+    spec:
+      serviceAccountName: alloy
+      # на ноде k3s-сервера тейнтов обычно нет, но если их поставят,
+      # сбор логов с неё не должен пропасть
+      tolerations:
+        - effect: NoSchedule
+          operator: Exists
+      containers:
+        - name: alloy
+          image: grafana/alloy:v1.20.1
+          args:
+            - run
+            - /etc/alloy/config.alloy
+            # где хранится позиция чтения по каждому файлу
+            - --storage.path=/var/lib/alloy
+            # UI и /metrics; наружу не публикуется, только port-forward
+            - --server.http.listen-addr=0.0.0.0:12345
+          ports:
+            - name: http
+              containerPort: 12345
+          securityContext:
+            # файлы в /var/log/pods принадлежат root и читаются только им
+            runAsUser: 0
+          volumeMounts:
+            - name: config
+              mountPath: /etc/alloy
+              readOnly: true
+            - name: varlog
+              mountPath: /var/log
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/alloy
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: alloy-config
+        - name: varlog
+          hostPath:
+            path: /var/log
+        - name: data
+          # позиции чтения на диске ноды: после перезапуска пода логи
+          # дочитываются с места остановки, а не с начала файлов
+          hostPath:
+            path: /var/lib/alloy
+            type: DirectoryOrCreate

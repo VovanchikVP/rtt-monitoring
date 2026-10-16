@@ -1,0 +1,47 @@
+# Datasource'ы заводятся provisioning'ом: Grafana читает каталог при старте,
+# руками в UI ничего добавлять не нужно.
+#
+# Метка grafana_datasource нужна только на случай, если в kube-prometheus-stack
+# включат свою Grafana — её sidecar подхватит тот же ConfigMap.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: monitoring
+  labels:
+    grafana_datasource: "1"
+data:
+  loki.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://loki.monitoring.svc.cluster.local:3100
+        isDefault: true
+        jsonData:
+          # Loki поднят с auth_enabled: false, заголовок X-Scope-OrgID не нужен
+          maxLines: 1000
+  prometheus.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Prometheus
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        # сервис от kube-prometheus-stack; имя проверить:
+        #   kubectl -n monitoring get svc | grep prometheus
+        url: http://kube-prometheus-stack-prometheus.monitoring.svc.cluster.local:9090
+        isDefault: false
+        jsonData:
+          # как часто Prometheus собирает метрики — Grafana по этому значению
+          # выбирает шаг запроса
+          timeInterval: 30s
+      - name: Alertmanager
+        uid: alertmanager
+        type: alertmanager
+        access: proxy
+        url: http://kube-prometheus-stack-alertmanager.monitoring.svc.cluster.local:9093
+        jsonData:
+          implementation: prometheus

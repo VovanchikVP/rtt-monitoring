@@ -3,7 +3,7 @@
 ```
 ci/rabbitmq/    брокер (StatefulSet + PVC)
 ci/app/         приложение: миграции, api, worker, beat
-ci/monitoring/  логи приложения в Grafana (Loki + Alloy)
+ci/monitoring/  логи приложения: Loki + Alloy + Grafana
 ```
 
 База и брокер считаются внешней инфраструктурой: `ci/app` только обращается

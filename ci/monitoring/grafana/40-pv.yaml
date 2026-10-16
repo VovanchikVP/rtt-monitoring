@@ -1,0 +1,43 @@
+# Отдельный том под Grafana: SSD, смонтированный в /data/grafana
+# на ноде 192.168.1.132. Остальные тома в кластере как и раньше
+# раздаёт local-path, этот PV заведён руками и к нему отношения не имеет.
+#
+# Перед применением на ноде:
+#   sudo mkdir -p /data/grafana
+#   sudo chown 472:472 /data/grafana     # uid 472 — пользователь grafana в образе
+#   sudo chmod 2775 /data/grafana
+#
+# И подставить ниже имя ноды — nodeAffinity сопоставляется по hostname,
+# не по адресу:
+#   kubectl get nodes -o wide            # строка с INTERNAL-IP 192.168.1.132
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: grafana-data
+  labels:
+    app: grafana
+spec:
+  capacity:
+    # для local-тома это только учётная величина: место не режется,
+    # под видит весь раздел
+    storage: 5Gi
+  accessModes: ["ReadWriteOnce"]
+  # удаление PVC данные на диске не трогает
+  persistentVolumeReclaimPolicy: Retain
+  # пустая строка, а не local-path: том статический, провиженер не при чём
+  storageClassName: ""
+  local:
+    path: /data/grafana
+  # жёсткая привязка к заявке: посторонний PVC этот том не заберёт
+  claimRef:
+    namespace: monitoring
+    name: grafana-data
+  # для local-томов обязательна, иначе под уедет на ноду, где диска нет
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - base

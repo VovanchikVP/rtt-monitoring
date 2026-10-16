@@ -1,0 +1,10 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+resources:
+  - 10-secret.yaml
+  - 20-configmap.yaml
+  - 30-service.yaml
+  - 40-pv.yaml
+  - 50-pvc.yaml
+  - 60-deployment.yaml

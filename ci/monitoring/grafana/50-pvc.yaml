@@ -1,0 +1,16 @@
+# SQLite-база Grafana: пользователи, дашборды, история запросов.
+# Без тома всё это теряется при каждом перезапуске пода.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data
+  namespace: monitoring
+spec:
+  accessModes: ["ReadWriteOnce"]
+  # пустая строка отключает динамическую выдачу: заявка идёт не в local-path,
+  # а в заранее заведённый 40-pv.yaml
+  storageClassName: ""
+  volumeName: grafana-data
+  resources:
+    requests:
+      storage: 5Gi
