@@ -66,6 +66,13 @@ data:
       stage.regex {
         expression = "^\\S+ \\S+ (?P<level>[A-Z]+) (?P<logger>\\S+): "
       }
+      // celery перехватывает корневой логгер, и у воркера формат другой:
+      // "[2026-10-16 07:12:03,123: INFO/ForkPoolWorker-1] текст".
+      // Стадия, которая не совпала, просто ничего не извлекает.
+      stage.regex {
+        expression = "^\\[\\S+ \\S+: (?P<level>[A-Z]+)/\\S+\\] "
+      }
+
       stage.labels {
         values = {
           level = "level",

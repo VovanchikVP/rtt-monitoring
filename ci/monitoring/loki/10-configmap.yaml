@@ -44,7 +44,9 @@ data:
         cache_location: /var/loki/tsdb-cache
 
     limits_config:
-      retention_period: 720h          # 30 дней
+      retention_period: 168h          # 7 дней
+      # не давать Grafana запрашивать интервал, которого уже нет на диске
+      max_query_lookback: 168h
       # нужно для панели Logs volume в Grafana
       volume_enabled: true
       # запас на всплески логов воркера

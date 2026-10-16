@@ -8,3 +8,5 @@ resources:
   - 40-pv.yaml
   - 50-pvc.yaml
   - 60-deployment.yaml
+  - 70-dashboards-provider.yaml
+  - 80-dashboard-rtt.yaml

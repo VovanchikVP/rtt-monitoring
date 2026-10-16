@@ -79,7 +79,8 @@ ci/monitoring/loki/
 | Настройка | Зачем |
 |---|---|
 | `auth_enabled: false` | один арендатор, Grafana и Alloy ходят без `X-Scope-OrgID` |
-| `limits_config.retention_period: 720h` | 30 дней; чистит compactor, он включён |
+| `limits_config.retention_period: 168h` | 7 дней; чистит compactor, он включён |
+| `limits_config.max_query_lookback: 168h` | не пускать запросы за пределы срока хранения |
 | `limits_config.volume_enabled: true` | иначе в Grafana не работает панель Logs volume |
 | `ingestion_rate_mb: 8` | запас на всплески логов воркера, по умолчанию 4 |
 | `query_range.results_cache` | кеш внутри процесса вместо отдельного memcached |
@@ -90,8 +91,8 @@ kubectl apply -k ci/monitoring/loki
 kubectl -n monitoring rollout status statefulset/loki
 ```
 
-Том — обычный `local-path` на 10 Gi, этого хватает примерно на 30 дней логов
-приложения. Если логов станет больше, Loki разумно переселить на тот же SSD
+Том — обычный `local-path` на 10 Gi, при сроке хранения 7 дней запас
+многократный. Если логов станет больше, Loki разумно переселить на тот же SSD
 по образцу `grafana/40-pv.yaml`: завести PV на `/data/loki` и заменить
 `volumeClaimTemplates` на готовый PVC.
 
@@ -128,6 +129,14 @@ kubectl apply -k ci/monitoring/alloy
 kubectl -n monitoring rollout status daemonset/alloy
 kubectl -n monitoring logs ds/alloy | tail -20
 ```
+
+Строки разбираются двумя регулярками подряд: формат `app.py`
+(`2026-10-16 07:12:03,123 INFO src.module: текст`) и формат celery
+(`[2026-10-16 07:12:03,123: INFO/ForkPoolWorker-1] текст`) — воркер логирует
+по-своему, потому что celery перехватывает корневой логгер. Стадия, которая
+не совпала, просто ничего не извлекает. Access-лог uvicorn
+(`INFO:     10.42.0.1:51000 - "GET /tours HTTP/1.1" 200 OK`) не подходит
+ни под одну, и метки `level` у таких строк нет — это учтено в дашборде.
 
 Как это работает: `discovery.kubernetes` берёт список подов из API,
 `discovery.relabel` превращает каждый под в путь к файлу логов на ноде
@@ -170,6 +179,8 @@ ci/monitoring/grafana/
   40-pv.yaml           том на SSD ноды 192.168.1.132, /data/grafana
   50-pvc.yaml          заявка под SQLite-базу (дашборды, пользователи)
   60-deployment.yaml   сама Grafana
+  70-dashboards-provider.yaml  откуда Grafana берёт дашборды
+  80-dashboard-rtt.yaml        дашборд приложения, JSON целиком
 ```
 
 ### Диск
@@ -236,10 +247,52 @@ kubectl -n monitoring rollout restart deployment/grafana
 Проверка: **Explore → Loki → Label browser**, должен появиться `namespace`
 со значением `rtt`; **Explore → Prometheus** — метрики ноды и kube-state-metrics.
 
-Готовых дашбордов у этой Grafany нет: они идут в subchart'е, который выключен.
-Нужные берутся из **Dashboards → New → Import** по ID с grafana.com
-(1860 — Node Exporter Full, 15757 — Kubernetes / Views / Pods), для этого
-Grafane нужен доступ в интернет; либо импортом JSON-файла руками.
+Дашборд приложения приезжает provisioning'ом, см. ниже. Готовых дашбордов по
+кластеру у этой Grafany нет: они идут в subchart'е, который выключен. Нужные
+берутся из **Dashboards → New → Import** по ID с grafana.com (1860 — Node
+Exporter Full, 15757 — Kubernetes / Views / Pods), для этого Grafane нужен
+доступ в интернет; либо импортом JSON-файла руками.
+
+### Дашборд приложения
+
+`80-dashboard-rtt.yaml` — дашборд **RTT monitoring** в папке `RTT`, окно по
+умолчанию — сутки, обновление раз в минуту. Все панели считаются по логам:
+метрик у приложения пока нет, так что Prometheus здесь не участвует.
+
+| Панель | Что считает |
+|---|---|
+| Задач celery выполнено | строки воркера `Task ...[id] succeeded in ...s` |
+| Ошибок в задачах | строки воркера с `level="ERROR"` |
+| Запросов к API | access-лог uvicorn **без** `/health` |
+| Ответов 4xx/5xx | то же, с кодом ответа на 4 или 5 |
+| Задачи celery по типам | те же успешные задачи, имя задачи из текста строки |
+| Запросы к API без /health | разбивка по HTTP-методу |
+| Запросы по путям и кодам ответа | таблица метод/путь/код за выбранный период |
+| Ошибки по компонентам | `level="ERROR"` в разрезе `app` |
+| Логи (ряд свёрнут) | два окна логов: API и worker |
+
+`/health` отсекается не по метке, а по самой строке запроса: его дёргает
+kubelet каждые 10 секунд, и без фильтра он перебивает весь остальной трафик.
+Запрос целиком:
+
+```logql
+sum(count_over_time({namespace="$namespace", app="rtt-api"}
+  |~ `"[A-Z]+ [^"]+ HTTP/[0-9.]+"`
+  !~ `"[A-Z]+ /health[^"]*"` [$__range]))
+```
+
+Первый фильтр оставляет только строки access-лога, второй выкидывает из них
+пробы. Панели с разбивкой добавляют к этому `| regexp` с группами `method`,
+`path`, `status`.
+
+Переменные: `namespace` (подтягивается из меток Loki) и `поиск в логах` —
+подстрока или regexp, который подставляется в обе панели логов.
+
+Правки из UI не сохраняются (`allowUiUpdates: false`), источник правды — git.
+Поиграться с панелями удобно через **Save as** — копия уже обычная.
+Чтобы перенести правки обратно: **Dashboard settings → JSON Model**, скопировать
+в `80-dashboard-rtt.yaml` (отступ 4 пробела) и применить. Пересоздавать под не
+нужно, Grafana перечитывает каталог раз в минуту.
 
 ### Доступ снаружи
 
@@ -275,10 +328,13 @@ spec:
 {namespace="rtt"} |= "Поставлено на отслеживание"   # результат автопоиска
 {namespace="rtt"} |= "Не удалось"                   # сбои задач
 
+{namespace="rtt", app="rtt-worker"} |= "succeeded in"   # завершённые задачи
+
 sum by (app) (count_over_time({namespace="rtt", level="ERROR"}[1h]))
 ```
 
-Панель «ошибки за час по компонентам» делается из последнего запроса.
+Последний запрос — панель «Ошибки по компонентам» на дашборде RTT monitoring;
+остальные панели собраны из таких же строчек, их видно в JSON Model.
 
 ## 5. Логи приложения в JSON (желательно)
 
@@ -338,12 +394,13 @@ Loki заводит отдельный поток на каждое сочета
 
 | Компонент | RAM | Диск |
 |---|---|---|
-| Loki | 256–512 Mi | PVC 10 Gi, хватает на ~30 дней логов этого приложения |
+| Loki | 256–512 Mi | PVC 10 Gi, при хранении 7 дней занято заметно меньше |
 | Alloy | 100–200 Mi на ноду | — |
 | Grafana | 128–512 Mi | 5 Gi на SSD ноды, реально занимает десятки мегабайт |
 
-Срок хранения правится в `limits_config.retention_period` (`loki/10-configmap.yaml`);
-чистку делает compactor, он включён.
+Срок хранения — 7 дней, правится в `limits_config.retention_period`
+(`loki/10-configmap.yaml`) вместе с `max_query_lookback`; чистку делает
+compactor, он включён.
 
 ## Что можно добавить дальше
 
@@ -354,6 +411,3 @@ Loki заводит отдельный поток на каждое сочета
   что и Prometheus, — например, на `|= "Не удалось заполнить турнир"`.
 - **Метрики самих Loki и Alloy**: оператор `kube-prometheus-stack` уже стоит,
   так что хватит `ServiceMonitor` на `loki:3100/metrics` и `alloy:12345/metrics`.
-- **Дашборды в git**: Grafana умеет забирать их provisioning'ом из ConfigMap'ов
-  так же, как datasource'ы, — тогда панели переживут пересоздание пода
-  и не будут жить только в SQLite.

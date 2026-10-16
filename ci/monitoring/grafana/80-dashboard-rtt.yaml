@@ -1,0 +1,669 @@
+# Дашборд приложения: задачи celery, запросы к API и логи под катом.
+# Все панели считаются по логам из Loki — метрик у приложения пока нет.
+#
+# Чтобы поправить JSON руками: отредактировать панель в UI,
+# Dashboard settings -> JSON Model, скопировать обратно сюда.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-rtt
+  namespace: monitoring
+data:
+  rtt-monitoring.json: |
+    {
+      "uid": "rtt-monitoring",
+      "title": "RTT monitoring",
+      "description": "Задачи celery, запросы к API и логи приложения из Loki",
+      "tags": [
+        "rtt",
+        "loki"
+      ],
+      "editable": true,
+      "schemaVersion": 41,
+      "version": 1,
+      "refresh": "1m",
+      "time": {
+        "from": "now-24h",
+        "to": "now"
+      },
+      "timezone": "browser",
+      "timepicker": {
+        "refresh_intervals": [
+          "30s",
+          "1m",
+          "5m",
+          "15m",
+          "1h"
+        ]
+      },
+      "templating": {
+        "list": [
+          {
+            "name": "namespace",
+            "label": "namespace",
+            "type": "query",
+            "datasource": {
+              "type": "loki",
+              "uid": "loki"
+            },
+            "query": {
+              "refId": "LokiVariableQueryEditor-VariableQuery",
+              "type": 1,
+              "label": "namespace",
+              "stream": ""
+            },
+            "current": {
+              "text": "rtt",
+              "value": "rtt"
+            },
+            "refresh": 1,
+            "sort": 1,
+            "includeAll": false,
+            "multi": false
+          },
+          {
+            "name": "search",
+            "label": "поиск в логах",
+            "description": "подстрока или regexp, применяется к панелям логов",
+            "type": "textbox",
+            "query": "",
+            "current": {
+              "text": "",
+              "value": ""
+            },
+            "options": []
+          }
+        ]
+      },
+      "panels": [
+        {
+          "id": 1,
+          "type": "stat",
+          "title": "Задач celery выполнено",
+          "description": "Строки celery «Task ... succeeded in ...s» за выбранный период.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 0,
+            "y": 0
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "queryType": "instant",
+              "expr": "sum(count_over_time({namespace=\"$namespace\", app=\"rtt-worker\"} |= `succeeded in` [$__range]))"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "none",
+            "textMode": "auto",
+            "justifyMode": "auto"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "green"
+              },
+              "noValue": "0"
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 2,
+          "type": "stat",
+          "title": "Ошибок в задачах",
+          "description": "Строки воркера с уровнем ERROR: упавшие задачи и ошибки внутри них.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 6,
+            "y": 0
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "queryType": "instant",
+              "expr": "sum(count_over_time({namespace=\"$namespace\", app=\"rtt-worker\", level=\"ERROR\"} [$__range]))"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "none",
+            "textMode": "auto",
+            "justifyMode": "auto"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "noValue": "0",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 3,
+          "type": "stat",
+          "title": "Запросов к API",
+          "description": "Access-лог uvicorn без обращений к /health (их дёргает kubelet каждые 10 секунд).",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 12,
+            "y": 0
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "queryType": "instant",
+              "expr": "sum(count_over_time({namespace=\"$namespace\", app=\"rtt-api\"} |~ `\"[A-Z]+ [^\"]+ HTTP/[0-9.]+\"` !~ `\"[A-Z]+ /health[^\"]*\"` [$__range]))"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "none",
+            "textMode": "auto",
+            "justifyMode": "auto"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "noValue": "0",
+              "color": {
+                "mode": "fixed",
+                "fixedColor": "blue"
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 4,
+          "type": "stat",
+          "title": "Ответов 4xx/5xx",
+          "description": "Те же запросы без /health, у которых код ответа начинается на 4 или 5.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 4,
+            "w": 6,
+            "x": 18,
+            "y": 0
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "queryType": "instant",
+              "expr": "sum(count_over_time({namespace=\"$namespace\", app=\"rtt-api\"} |~ `\"[A-Z]+ [^\"]+ HTTP/[0-9.]+\"` !~ `\"[A-Z]+ /health[^\"]*\"` | regexp `\"(?P<method>[A-Z]+) (?P<path>[^ ?]+)[^\"]*\" (?P<status>[0-9]{3})` | status =~ `[45][0-9][0-9]` [$__range]))"
+            }
+          ],
+          "options": {
+            "reduceOptions": {
+              "calcs": [
+                "lastNotNull"
+              ],
+              "fields": "",
+              "values": false
+            },
+            "colorMode": "value",
+            "graphMode": "none",
+            "textMode": "auto",
+            "justifyMode": "auto"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "noValue": "0",
+              "color": {
+                "mode": "thresholds"
+              },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "orange",
+                    "value": 1
+                  }
+                ]
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 5,
+          "type": "timeseries",
+          "title": "Задачи celery по типам",
+          "description": "Успешно завершённые задачи, имя берётся из строки «Task <имя>[id] succeeded».",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 4
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "queryType": "range",
+              "legendFormat": "{{task}}",
+              "expr": "sum by (task) (count_over_time({namespace=\"$namespace\", app=\"rtt-worker\"} |= `succeeded in` | regexp `Task (?P<task>[^\\[]+)\\[` [$__auto]))"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "sum"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "custom": {
+                "drawStyle": "bars",
+                "fillOpacity": 60,
+                "lineWidth": 1,
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                },
+                "axisLabel": "задач",
+                "barAlignment": 0,
+                "pointSize": 5,
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 6,
+          "type": "timeseries",
+          "title": "Запросы к API без /health",
+          "description": "Разбивка по HTTP-методу.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 4
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "queryType": "range",
+              "legendFormat": "{{method}}",
+              "expr": "sum by (method) (count_over_time({namespace=\"$namespace\", app=\"rtt-api\"} |~ `\"[A-Z]+ [^\"]+ HTTP/[0-9.]+\"` !~ `\"[A-Z]+ /health[^\"]*\"` | regexp `\"(?P<method>[A-Z]+) (?P<path>[^ ?]+)[^\"]*\" (?P<status>[0-9]{3})` [$__auto]))"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true,
+              "calcs": [
+                "sum"
+              ]
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "custom": {
+                "drawStyle": "bars",
+                "fillOpacity": 60,
+                "lineWidth": 1,
+                "stacking": {
+                  "mode": "normal",
+                  "group": "A"
+                },
+                "axisLabel": "запросов",
+                "barAlignment": 0,
+                "pointSize": 5,
+                "showPoints": "never"
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 7,
+          "type": "table",
+          "title": "Запросы по путям и кодам ответа",
+          "description": "Без /health. Путь — как он записан в access-логе, id турнира попадает в него как есть.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 12
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "queryType": "instant",
+              "format": "table",
+              "expr": "sum by (method, path, status) (count_over_time({namespace=\"$namespace\", app=\"rtt-api\"} |~ `\"[A-Z]+ [^\"]+ HTTP/[0-9.]+\"` !~ `\"[A-Z]+ /health[^\"]*\"` | regexp `\"(?P<method>[A-Z]+) (?P<path>[^ ?]+)[^\"]*\" (?P<status>[0-9]{3})` [$__range]))"
+            }
+          ],
+          "transformations": [
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true
+                },
+                "renameByName": {
+                  "method": "метод",
+                  "path": "путь",
+                  "status": "код",
+                  "Value": "запросов"
+                }
+              }
+            },
+            {
+              "id": "sortBy",
+              "options": {
+                "sort": [
+                  {
+                    "field": "запросов",
+                    "desc": true
+                  }
+                ]
+              }
+            }
+          ],
+          "options": {
+            "showHeader": true,
+            "cellHeight": "sm",
+            "footer": {
+              "show": false,
+              "reducer": [
+                "sum"
+              ],
+              "countRows": false,
+              "fields": ""
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "filterable": true
+              },
+              "unit": "short",
+              "decimals": 0
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "запросов"
+                },
+                "properties": [
+                  {
+                    "id": "custom.width",
+                    "value": 110
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "id": 8,
+          "type": "timeseries",
+          "title": "Ошибки по компонентам",
+          "description": "Строки с уровнем ERROR. У API уровень снимается с логов приложения, access-лог uvicorn уровня не несёт.",
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 12
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "queryType": "range",
+              "legendFormat": "{{app}}",
+              "expr": "sum by (app) (count_over_time({namespace=\"$namespace\", level=\"ERROR\"} [$__auto]))"
+            }
+          ],
+          "options": {
+            "legend": {
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "decimals": 0,
+              "custom": {
+                "drawStyle": "bars",
+                "fillOpacity": 70,
+                "lineWidth": 1,
+                "axisLabel": "ошибок",
+                "showPoints": "never"
+              },
+              "color": {
+                "mode": "palette-classic"
+              }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "id": 9,
+          "type": "row",
+          "title": "Логи",
+          "collapsed": true,
+          "gridPos": {
+            "h": 1,
+            "w": 24,
+            "x": 0,
+            "y": 20
+          },
+          "panels": [
+            {
+              "id": 10,
+              "type": "logs",
+              "title": "API",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "gridPos": {
+                "h": 12,
+                "w": 24,
+                "x": 0,
+                "y": 21
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {
+                    "type": "loki",
+                    "uid": "loki"
+                  },
+                  "queryType": "range",
+                  "expr": "{namespace=\"$namespace\", app=\"rtt-api\"} |~ `$search`"
+                }
+              ],
+              "options": {
+                "showTime": true,
+                "showLabels": false,
+                "showCommonLabels": false,
+                "wrapLogMessage": true,
+                "prettifyLogMessage": false,
+                "enableLogDetails": true,
+                "dedupStrategy": "none",
+                "sortOrder": "Descending"
+              }
+            },
+            {
+              "id": 11,
+              "type": "logs",
+              "title": "Worker",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "gridPos": {
+                "h": 12,
+                "w": 24,
+                "x": 0,
+                "y": 33
+              },
+              "targets": [
+                {
+                  "refId": "A",
+                  "datasource": {
+                    "type": "loki",
+                    "uid": "loki"
+                  },
+                  "queryType": "range",
+                  "expr": "{namespace=\"$namespace\", app=\"rtt-worker\"} |~ `$search`"
+                }
+              ],
+              "options": {
+                "showTime": true,
+                "showLabels": false,
+                "showCommonLabels": false,
+                "wrapLogMessage": true,
+                "prettifyLogMessage": false,
+                "enableLogDetails": true,
+                "dedupStrategy": "none",
+                "sortOrder": "Descending"
+              }
+            }
+          ]
+        }
+      ]
+    }
