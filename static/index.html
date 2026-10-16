@@ -61,6 +61,14 @@
       border: none; background: none; color: var(--accent); padding: 4px 6px;
     }
     button.link.danger { color: var(--danger); }
+    button.icon {
+      border: none; background: none; padding: 5px; border-radius: 6px;
+      display: inline-flex; line-height: 0; color: var(--muted);
+    }
+    button.icon.danger:hover, button.icon.danger:focus-visible {
+      color: var(--danger);
+      background: color-mix(in srgb, var(--danger) 14%, transparent);
+    }
     button:disabled { opacity: .5; cursor: default; }
     .msg { margin-top: 10px; font-size: 13px; min-height: 18px; }
     .msg.error { color: var(--danger); }
@@ -69,6 +77,10 @@
     th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
     th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
     td.num, th.num { text-align: right; white-space: nowrap; }
+    tbody tr.clickable { cursor: pointer; }
+    tbody tr.clickable:hover td { background: color-mix(in srgb, var(--text) 5%, transparent); }
+    tbody tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+    /* правило идёт после hover: выделение выбранной строки должно его перебивать */
     tr.selected td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
     .pending { color: var(--pending); }
     .empty { color: var(--muted); padding: 12px 2px; }
@@ -87,7 +99,7 @@
 <body>
 <div class="wrap">
   <h1>RTT monitoring</h1>
-  <div class="sub">Турниры и рейтинговые очки участников</div>
+  <div class="sub">Турниры и рейтинговые очки участников. Клик по строке турнира покажет состав</div>
 
   <div class="card">
     <form class="row" id="add-form">
@@ -150,13 +162,19 @@
 
   function renderTours(tours) {
     const tbody = $('tours').querySelector('tbody');
+    // строки создаются заново, поэтому фокус запоминаем и возвращаем — иначе
+    // после первого же нажатия Enter клавиатурная навигация обрывается
+    const focused = document.activeElement?.closest?.('tr[data-tour]')?.dataset.tour ?? null;
     tbody.innerHTML = '';
     $('tours-empty').hidden = tours.length > 0;
     $('tours').hidden = tours.length === 0;
 
     for (const t of tours) {
       const tr = document.createElement('tr');
-      if (t.id === selectedTour) tr.className = 'selected';
+      tr.className = t.id === selectedTour ? 'clickable selected' : 'clickable';
+      tr.dataset.tour = t.id;
+      tr.tabIndex = 0;
+      tr.title = t.id === selectedTour ? 'Скрыть участников' : 'Показать участников';
 
       const name = isPending(t)
         ? '<span class="pending">заполняется…</span>'
@@ -169,11 +187,18 @@
         <td>${tourDates(t)}</td>
         <td class="num">${t.players_count}</td>
         <td class="num">
-          <button class="link" data-players="${t.id}">участники</button>
-          <button class="link danger" data-delete="${t.id}">удалить</button>
+          <button class="icon danger" data-delete="${t.id}"
+                  title="Удалить турнир" aria-label="Удалить турнир ${t.id}">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M4 7h16M10 4h4M9 7v12M15 7v12M6 7l1 13h10l1-13"/>
+            </svg>
+          </button>
         </td>`;
       tbody.appendChild(tr);
     }
+
+    if (focused !== null) tbody.querySelector(`tr[data-tour="${focused}"]`)?.focus();
   }
 
   function escape(s) {
@@ -309,13 +334,24 @@
     return null;
   }
 
-  document.addEventListener('click', async (e) => {
-    const openId = e.target.dataset?.players;
-    const delId = e.target.dataset?.delete;
+  async function toggleTour(tourId) {
+    if (tourId === selectedTour) {
+      closePlayers();
+    } else {
+      await loadPlayers(tourId);
+    }
+    await loadTours();   // перерисовка подсветит выбранную строку
+  }
 
-    if (openId) {
-      await loadPlayers(Number(openId));
-      await loadTours();
+  document.addEventListener('click', async (e) => {
+    // клик может прийтись на иконку внутри кнопки, поэтому ищем саму кнопку
+    const button = e.target.closest?.('button');
+    const delId = button?.dataset.delete;
+
+    // кнопки внутри строки работают сами по себе и состав не открывают
+    const row = e.target.closest?.('tr[data-tour]');
+    if (row && !button) {
+      await toggleTour(Number(row.dataset.tour));
     }
 
     if (delId) {
@@ -324,6 +360,14 @@
       if (resp.ok && Number(delId) === selectedTour) closePlayers();
       await loadTours();
     }
+  });
+
+  document.addEventListener('keydown', async (e) => {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    const row = e.target.closest?.('tr[data-tour]');
+    if (!row) return;
+    e.preventDefault();          // пробел иначе прокручивает страницу
+    await toggleTour(Number(row.dataset.tour));
   });
 
   // при уходе со вкладки опрос не нужен

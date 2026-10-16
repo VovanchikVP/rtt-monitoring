@@ -1,8 +1,9 @@
 # Развёртывание в k3s
 
 ```
-ci/rabbitmq/  брокер (StatefulSet + PVC)
-ci/app/       приложение: миграции, api, worker, beat
+ci/rabbitmq/    брокер (StatefulSet + PVC)
+ci/app/         приложение: миграции, api, worker, beat
+ci/monitoring/  логи приложения в Grafana (Loki + Alloy)
 ```
 
 База и брокер считаются внешней инфраструктурой: `ci/app` только обращается
