@@ -19,8 +19,18 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pre-commit>=4.7.0",
+    "pytest>=8.4.2",
+    "pytest-asyncio>=1.3.0",
     "ruff>=0.17.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# корень проекта в sys.path, чтобы работал импорт src.*
+pythonpath = ["."]
+# тесты запросов асинхронные, помечать каждый декоратором незачем
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
 
 [tool.ruff]
 line-length = 100

@@ -34,6 +34,24 @@ jobs:
           APP_DB_NAME: ci
         run: uv run python -c "import app, src.celery.tasks"
 
+  tests:
+    name: Тесты
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Установить uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Поставить зависимости
+        run: uv sync --frozen
+
+      # внешний API и база не нужны: запросы уходят на локальную заглушку
+      - name: pytest
+        run: uv run pytest -q
+
   manifests:
     name: Манифесты k8s
     runs-on: ubuntu-latest
