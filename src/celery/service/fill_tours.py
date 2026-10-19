@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.celery.app import celery_app
+from src.celery.service.fill_rating_history import FillRatingHistoryService
 from src.const import API_URL, HEADERS, HTTP_TIMEOUT
 from src.models import Players, Tours, tours_players
 from src.models.base import async_session
@@ -74,16 +74,16 @@ class FillToursService:
                 setattr(tour, field, value)
 
             players = cls.get_tour_players(data)
-            added_players = await cls.add_missing_players(session, players)
+            new_players = await cls.add_missing_players(session, players)
             await cls.add_missing_links(session, tour_id, [p["id"] for p in players])
 
             await session.commit()
 
         logger.info("Турнир %s заполнен, участников: %s", tour_id, len(players))
 
-        if added_players:
-            # по новым игрокам сразу добираем очки, не дожидаясь суточного запуска
-            celery_app.send_task("points.fill")
+        # по новым игрокам сразу добираем историю рейтинга за последние месяцы,
+        # не дожидаясь суточного запуска
+        FillRatingHistoryService.schedule(new_players)
 
     @classmethod
     async def fetch_tour_players(cls, http: aiohttp.ClientSession, tour_id: int) -> dict:
@@ -128,10 +128,10 @@ class FillToursService:
         ]
 
     @classmethod
-    async def add_missing_players(cls, session: AsyncSession, players: list[dict]) -> int:
-        """Добавить в `players` тех, кого там ещё нет. Возвращает число добавленных."""
+    async def add_missing_players(cls, session: AsyncSession, players: list[dict]) -> list[int]:
+        """Добавить в `players` тех, кого там ещё нет. Возвращает их идентификаторы."""
         if not players:
-            return 0
+            return []
 
         known = set(
             await session.scalars(
@@ -140,11 +140,11 @@ class FillToursService:
         )
         new = [p for p in players if p["id"] not in known]
         if not new:
-            return 0
+            return []
 
         await session.execute(insert(Players).values(new).on_conflict_do_nothing())
         logger.info("Добавлено новых игроков: %s", len(new))
-        return len(new)
+        return [p["id"] for p in new]
 
     @classmethod
     async def add_missing_links(

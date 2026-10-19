@@ -5,7 +5,7 @@ import aiohttp
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.celery.app import celery_app
+from src.celery.service.fill_rating_history import FillRatingHistoryService
 from src.celery.service.fill_tours import FillToursService
 from src.const import HTTP_TIMEOUT
 from src.models import Tours, tours_players
@@ -32,18 +32,18 @@ class SyncToursService:
 
         logger.info("Предстоящих турниров: %s", len(tour_ids))
         timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
-        added_players = 0
+        new_players: list[int] = []
         async with aiohttp.ClientSession(timeout=timeout) as http:
             for tour_id in tour_ids:
                 try:
-                    added_players += await cls.sync_tour(http, tour_id)
+                    new_players += await cls.sync_tour(http, tour_id)
                 except Exception:
                     # один сбойный турнир не должен ронять остальные
                     logger.exception("Не удалось сверить состав турнира %s", tour_id)
 
-        if added_players:
-            # по новым игрокам сразу добираем очки, не дожидаясь суточного запуска
-            celery_app.send_task("points.fill")
+        # по новым игрокам сразу добираем историю рейтинга за последние месяцы,
+        # не дожидаясь суточного запуска
+        FillRatingHistoryService.schedule(new_players)
 
     @classmethod
     async def get_upcoming_tour_ids(cls) -> list[int]:
@@ -54,20 +54,20 @@ class SyncToursService:
             )
 
     @classmethod
-    async def sync_tour(cls, http: aiohttp.ClientSession, tour_id: int) -> int:
-        """Сверить состав одного турнира. Возвращает число добавленных игроков."""
+    async def sync_tour(cls, http: aiohttp.ClientSession, tour_id: int) -> list[int]:
+        """Сверить состав одного турнира. Возвращает идентификаторы добавленных игроков."""
         data = await FillToursService.fetch_tour_players(http, tour_id)
         players = FillToursService.get_tour_players(data)
         player_ids = [p["id"] for p in players]
 
         async with async_session() as session:
-            added = await FillToursService.add_missing_players(session, players)
+            new_players = await FillToursService.add_missing_players(session, players)
             await FillToursService.add_missing_links(session, tour_id, player_ids)
             await cls.remove_extra_links(session, tour_id, player_ids)
             await session.commit()
 
         logger.info("Состав турнира %s сверен, участников: %s", tour_id, len(player_ids))
-        return added
+        return new_players
 
     @classmethod
     async def remove_extra_links(

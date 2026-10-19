@@ -7,6 +7,7 @@ import aiohttp
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from src.celery.app import celery_app
 from src.celery.service.fill_points import FillPointsService
 from src.const import HTTP_TIMEOUT, REQUEST_DELAY
 from src.models import Points
@@ -32,6 +33,22 @@ class FillRatingHistoryService:
 
     # не чаще одного запуска в REQUEST_DELAY секунд на воркера
     RATE_LIMIT = f"{60 // REQUEST_DELAY}/m"
+
+    @classmethod
+    def schedule(cls, player_ids: list[int]) -> None:
+        """Поставить задачу добора истории рейтинга на каждого игрока из списка.
+
+        Задачи расходятся по времени ещё на входе в очередь, `rate_limit`
+        самой задачи страхует от наплыва.
+        """
+        if not player_ids:
+            return
+
+        for number, player_id in enumerate(player_ids):
+            celery_app.send_task(
+                "points.fill_history", args=[player_id], countdown=number * REQUEST_DELAY
+            )
+        logger.info("Поставлено задач на историю рейтинга: %s", len(player_ids))
 
     @classmethod
     async def run(cls, player_id: int) -> int:
