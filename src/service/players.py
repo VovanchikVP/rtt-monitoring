@@ -4,17 +4,34 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.schemas import RatingRefreshRead
+from src.api.schemas import PlayerPointRead, RatingRefreshRead
 from src.celery.service.fill_rating_history import FillRatingHistoryService
 from src.celery.tasks import fill_rating_history_task
 from src.const import REQUEST_DELAY
-from src.models import Players
+from src.models import Players, Points
 
 logger = logging.getLogger(__name__)
 
 
 class PlayersService:
     """Бизнес-логика эндпоинтов игроков."""
+
+    @classmethod
+    async def get_points(cls, session: AsyncSession, player_id: int) -> list[PlayerPointRead]:
+        """История рейтинга игрока, от старых записей к новым."""
+        player = await session.get(Players, player_id)
+        if player is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Игрок {player_id} не найден",
+            )
+
+        rows = await session.execute(
+            select(Points.date, Points.points)
+            .where(Points.players_id == player_id)
+            .order_by(Points.date)
+        )
+        return [PlayerPointRead.model_validate(row) for row in rows]
 
     @classmethod
     async def refresh_rating(cls, session: AsyncSession) -> RatingRefreshRead:
