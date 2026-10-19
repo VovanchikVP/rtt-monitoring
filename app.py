@@ -3,7 +3,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from src.api.routers import tours_router
+from src.api.routers import players_router, tours_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -12,6 +12,7 @@ logging.basicConfig(
 
 app = FastAPI(title="RTT monitoring")
 app.include_router(tours_router)
+app.include_router(players_router)
 
 
 @app.get("/health", tags=["service"])

@@ -1,5 +1,6 @@
 from src.celery.app import celery_app, run_async
 from src.celery.service.fill_points import FillPointsService
+from src.celery.service.fill_rating_history import FillRatingHistoryService
 from src.celery.service.fill_tours import FillToursService
 from src.celery.service.search_tours import SearchToursService
 from src.celery.service.sync_tours import SyncToursService
@@ -15,6 +16,16 @@ def fill_empty_tours_task() -> None:
 def fill_points_task() -> None:
     """Добрать очки игроков, у которых нет записи за текущий месяц."""
     run_async(FillPointsService.run())
+
+
+@celery_app.task(name="points.fill_history", rate_limit=FillRatingHistoryService.RATE_LIMIT)
+def fill_rating_history_task(player_id: int) -> None:
+    """Добрать историю рейтинга одного игрока за последние месяцы.
+
+    Задача ставится по одной на игрока, rate_limit разводит их запуск
+    по времени — внешнее API не любит частых обращений.
+    """
+    run_async(FillRatingHistoryService.run(player_id))
 
 
 @celery_app.task(name="tours.sync_players")

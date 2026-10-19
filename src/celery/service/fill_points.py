@@ -69,13 +69,15 @@ class FillPointsService:
         return result.rowcount
 
     @classmethod
-    async def fetch_rating_details(cls, http: aiohttp.ClientSession, player_id: int) -> dict:
-        """Запросить карточку игрока в текущем рейтинг-листе."""
+    async def fetch_rating_details(
+        cls, http: aiohttp.ClientSession, player_id: int, rating_id: str | None = None
+    ) -> dict:
+        """Запросить карточку игрока в рейтинг-листе; по умолчанию — в текущем."""
         form = [
             # ruid — метка времени в миллисекундах, как её шлёт браузер
             ("ruid", str(int(time.time() * 1000))),
             ("method[0]", "rating.details"),
-            ("rating_id", cls.get_rating_id()),
+            ("rating_id", rating_id or cls.get_rating_id()),
             ("player_id", str(player_id)),
         ]
         async with http.post(API_URL, data=form, headers=HEADERS) as resp:
@@ -83,9 +85,9 @@ class FillPointsService:
             return await resp.json(content_type=None)
 
     @classmethod
-    def get_rating_id(cls) -> str:
-        """Идентификатор рейтинг-листа текущего месяца."""
-        return date.today().strftime("%Y%m011")
+    def get_rating_id(cls, month: date | None = None) -> str:
+        """Идентификатор рейтинг-листа месяца; без аргумента — текущего."""
+        return (month or date.today()).strftime("%Y%m011")
 
     @classmethod
     def get_points(cls, data: dict) -> int:
