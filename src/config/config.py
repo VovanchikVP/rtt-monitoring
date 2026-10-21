@@ -25,6 +25,8 @@ class Settings(BaseSettings):
     SYNC_TOURS_HOUR: int = int(os.environ.get("APP_SYNC_TOURS_HOUR", 4))
     # час суток (UTC), когда идёт автоматический поиск новых турниров
     SEARCH_TOURS_HOUR: int = int(os.environ.get("APP_SEARCH_TOURS_HOUR", 5))
+    # час суток (UTC), когда разбираются матчи идущих турниров
+    FILL_MATCHES_HOUR: int = int(os.environ.get("APP_FILL_MATCHES_HOUR", 6))
 
     @property
     def CELERY_BROKER_URL(self) -> str:

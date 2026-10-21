@@ -1,4 +1,5 @@
 from src.celery.app import celery_app, run_async
+from src.celery.service.fill_matches import FillMatchesService
 from src.celery.service.fill_points import FillPointsService
 from src.celery.service.fill_rating_history import FillRatingHistoryService
 from src.celery.service.fill_tours import FillToursService
@@ -38,3 +39,19 @@ def sync_tours_players_task() -> None:
 def search_tours_task() -> None:
     """Найти турниры по сохранённым фильтрам и поставить новые на отслеживание."""
     run_async(SearchToursService.run())
+
+
+@celery_app.task(name="matches.fill_all")
+def fill_matches_all_task() -> None:
+    """Поставить задачу разбора матчей на каждый идущий турнир."""
+    run_async(FillMatchesService.schedule_all())
+
+
+@celery_app.task(name="matches.fill", rate_limit=FillMatchesService.RATE_LIMIT)
+def fill_matches_task(tour_id: int) -> None:
+    """Разобрать матчи одного турнира.
+
+    Задача ставится по одной на турнир, rate_limit разводит их запуск
+    по времени — внешнее API не любит частых обращений.
+    """
+    run_async(FillMatchesService.run(tour_id))

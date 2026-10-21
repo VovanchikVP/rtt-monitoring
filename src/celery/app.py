@@ -38,6 +38,10 @@ celery_app.conf.update(
             "task": "tours.search",
             "schedule": crontab(hour=settings.SEARCH_TOURS_HOUR, minute=0),
         },
+        "fill-matches": {
+            "task": "matches.fill_all",
+            "schedule": crontab(hour=settings.FILL_MATCHES_HOUR, minute=0),
+        },
     },
 )
 

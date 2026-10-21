@@ -16,11 +16,11 @@ import pytest_asyncio
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from src.celery.service import fill_points, fill_tours, search_tours
+from src.celery.service import fill_matches, fill_points, fill_tours, search_tours
 from src.const import HTTP_TIMEOUT
 
 # модули, в которых адрес API надо подменить на локальный сервер
-API_MODULES = (fill_points, fill_tours, search_tours)
+API_MODULES = (fill_matches, fill_points, fill_tours, search_tours)
 
 
 @dataclass
