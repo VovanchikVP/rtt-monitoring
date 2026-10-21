@@ -1,7 +1,7 @@
 """rating details
 
 Revision ID: a1c7f4e2b901
-Revises: d503d7e1346b
+Revises: b198c14f8c77
 Create Date: 2026-10-21 00:00:00.000000
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'a1c7f4e2b901'
-down_revision: Union[str, Sequence[str], None] = 'd503d7e1346b'
+down_revision: Union[str, Sequence[str], None] = 'b198c14f8c77'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
