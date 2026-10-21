@@ -1,12 +1,12 @@
 import logging
 import time
-from datetime import date
 
 import aiohttp
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.celery.service.dates import parse_date
 from src.celery.service.fill_rating_history import FillRatingHistoryService
 from src.const import API_URL, HEADERS, HTTP_TIMEOUT
 from src.models import Players, Tours, tours_players
@@ -21,19 +21,6 @@ class FillToursService:
     Находит в `tours` незаполненные записи, дотягивает по ним карточку турнира,
     добавляет недостающих игроков и связи игроков с турниром.
     """
-
-    # API отдаёт эту дату как признак «значение не заполнено»
-    EMPTY_DATE = "1900-01-01"
-
-    @classmethod
-    def parse_date(cls, value: str | None) -> date | None:
-        """Дата из ответа API; пустые значения и заглушки превращаются в None."""
-        if not value or value.startswith(cls.EMPTY_DATE):
-            return None
-        try:
-            return date.fromisoformat(value[:10])
-        except ValueError:
-            return None
 
     @classmethod
     async def run(cls) -> None:
@@ -107,8 +94,8 @@ class FillToursService:
             "name": tour.get("name"),
             "location": tour.get("location"),
             "location_full": tour.get("location_full"),
-            "begin_date": cls.parse_date(tour.get("begin_date")),
-            "end_date": cls.parse_date(tour.get("end_date")),
+            "begin_date": parse_date(tour.get("begin_date")),
+            "end_date": parse_date(tour.get("end_date")),
             "tour_members": tour.get("tour_members"),
         }
 
@@ -120,7 +107,7 @@ class FillToursService:
             {
                 "id": p.get("player_id"),
                 "name": p.get("name"),
-                "birth_date": cls.parse_date(p.get("birth_date")),
+                "birth_date": parse_date(p.get("birth_date")),
                 "city": p.get("doc_city") or None,
             }
             for p in players

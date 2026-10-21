@@ -6,8 +6,9 @@ import aiohttp
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from src.celery.service.dates import parse_date
 from src.const import API_URL, HEADERS, HTTP_TIMEOUT
-from src.models import Players, Points
+from src.models import Players, Points, RatingDetails, Tours
 from src.models.base import async_session
 
 logger = logging.getLogger(__name__)
@@ -18,6 +19,9 @@ class FillPointsService:
 
     Запрашивает данные только по тем игрокам, у которых ещё нет записи
     за текущий месяц. Новые записи добавляются, старые не трогаются.
+
+    Тот же ответ несёт список турниров игрока — он ложится в `rating_details`,
+    а незнакомые турниры попутно заводятся в `tours`.
     """
 
     @classmethod
@@ -66,6 +70,8 @@ class FillPointsService:
             )
             await session.commit()
 
+        await cls.save_rating_details(player_id, cls.get_tours(data))
+
         return result.rowcount
 
     @classmethod
@@ -94,3 +100,81 @@ class FillPointsService:
         """Очки игрока из ответа `rating.details`; без рейтинга считаем 0."""
         rating = data.get("data", {}).get("rating.details", {}).get("rating") or {}
         return rating.get("points") or 0
+
+    @classmethod
+    def get_tours(cls, data: dict) -> list[dict]:
+        """Результаты игрока по турнирам из ответа `rating.details`.
+
+        Один турнир в списке встречается один раз, но ответы соседних месяцев
+        пересекаются, поэтому записи дедуплицируются по `tour_id`.
+        """
+        tours = data.get("data", {}).get("rating.details", {}).get("tours") or []
+        parsed = {
+            tour["tour_id"]: {
+                "tour_id": tour["tour_id"],
+                "name": tour.get("name"),
+                "city": tour.get("city") or None,
+                # у турнира в этом блоке одна дата — она же начало и конец
+                "date": parse_date(tour.get("date")),
+                # место бывает диапазоном вида «17-32», поэтому строка
+                "position": str(tour["pos"]) if tour.get("pos") not in (None, "") else None,
+                "points": tour.get("points"),
+            }
+            for tour in tours
+            if tour.get("tour_id")
+        }
+        return list(parsed.values())
+
+    @classmethod
+    async def save_rating_details(cls, player_id: int, tours: list[dict]) -> int:
+        """Завести недостающие турниры и записать результаты игрока в них.
+
+        Возвращает число затронутых записей `rating_details`.
+        """
+        if not tours:
+            return 0
+
+        async with async_session() as session:
+            # турнира может не быть в базе: внешний ключ требует завести его первым
+            await session.execute(
+                insert(Tours)
+                .values(
+                    [
+                        {
+                            "id": tour["tour_id"],
+                            "name": tour["name"],
+                            "location": tour["city"],
+                            "begin_date": tour["date"],
+                            "end_date": tour["date"],
+                        }
+                        for tour in tours
+                    ]
+                )
+                # знакомый турнир не трогаем: его карточка заполнена подробнее
+                .on_conflict_do_nothing(index_elements=["id"])
+            )
+
+            statement = insert(RatingDetails).values(
+                [
+                    {
+                        "tour_id": tour["tour_id"],
+                        "player_id": player_id,
+                        "position": tour["position"],
+                        "points": tour["points"],
+                    }
+                    for tour in tours
+                ]
+            )
+            # очки за турнир со временем пересчитываются — свежий ответ главнее
+            result = await session.execute(
+                statement.on_conflict_do_update(
+                    index_elements=["tour_id", "player_id"],
+                    set_={
+                        "position": statement.excluded.position,
+                        "points": statement.excluded.points,
+                    },
+                )
+            )
+            await session.commit()
+
+        return result.rowcount

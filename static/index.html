@@ -94,6 +94,22 @@
     }
     @keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .25 } }
     .wide { overflow-x: auto; }
+    details.done { margin-top: 10px; border-top: 1px solid var(--line); }
+    details.done > summary {
+      cursor: pointer; color: var(--muted); font-size: 13px;
+      padding: 10px 2px 4px; display: flex; align-items: center; gap: 7px;
+      list-style: none;
+    }
+    details.done > summary::-webkit-details-marker { display: none; }
+    details.done > summary::before {
+      content: '▸'; display: inline-block; transition: transform .15s ease;
+    }
+    details.done[open] > summary::before { transform: rotate(90deg); }
+    details.done > summary:hover { color: var(--text); }
+    details.done > summary:focus-visible {
+      outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px;
+    }
+    details.done .wide { margin-bottom: 4px; }
     /* строка с графиком не кликабельна и не подсвечивается при наведении */
     tr.chart-row td { padding-top: 0; border-bottom: 1px solid var(--line); }
     .chart { width: 100%; }
@@ -137,6 +153,20 @@
       <tbody></tbody>
     </table></div>
     <div class="empty" id="tours-empty" hidden>Пока ни одного турнира</div>
+    <div class="empty" id="tours-current-empty" hidden>Все турниры уже завершились</div>
+
+    <details class="done" id="tours-done-box" hidden>
+      <summary id="tours-done-summary"></summary>
+      <div class="wide"><table id="tours-done">
+        <thead>
+          <tr>
+            <th class="num">ID</th><th>Название</th><th>Город</th>
+            <th>Даты</th><th class="num">Участников</th><th></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table></div>
+    </details>
   </div>
 
   <div class="card" id="players-card" hidden>
@@ -179,45 +209,92 @@
   // турнир считается незаполненным, пока фоновая задача не подтянула карточку
   const isPending = (t) => t.name === null;
 
+  function todayISO() {
+    const d = new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }
+
+  // турнир завершён, когда дата окончания уже прошла; незаполненный турнир
+  // дат ещё не знает и завершённым не считается
+  const isFinished = (t) => Boolean(t.end_date) && t.end_date < todayISO();
+
+  // свёрнутую секцию раскрываем один раз на выбор турнира, иначе перерисовка
+  // по таймеру не давала бы свернуть её обратно
+  let revealedTour = null;
+
   function renderTours(tours) {
-    const tbody = $('tours').querySelector('tbody');
     // строки создаются заново, поэтому фокус запоминаем и возвращаем — иначе
     // после первого же нажатия Enter клавиатурная навигация обрывается
     const focused = document.activeElement?.closest?.('tr[data-tour]')?.dataset.tour ?? null;
-    tbody.innerHTML = '';
+
+    const current = tours.filter((t) => !isFinished(t));
+    // в основном списке ближайшие сверху, в завершённых — наоборот, свежие
+    const finished = tours.filter(isFinished).reverse();
+
+    fillTours($('tours'), current);
+    fillTours($('tours-done'), finished);
+
     $('tours-empty').hidden = tours.length > 0;
-    $('tours').hidden = tours.length === 0;
+    $('tours').hidden = current.length === 0;
+    $('tours-current-empty').hidden = tours.length === 0 || current.length > 0;
 
-    for (const t of tours) {
-      const tr = document.createElement('tr');
-      tr.className = t.id === selectedTour ? 'clickable selected' : 'clickable';
-      tr.dataset.tour = t.id;
-      tr.tabIndex = 0;
-      tr.title = t.id === selectedTour ? 'Скрыть участников' : 'Показать участников';
+    const box = $('tours-done-box');
+    box.hidden = finished.length === 0;
+    $('tours-done-summary').textContent =
+      `Завершённые турниры — ${finished.length} ${tourWord(finished.length)}`;
 
-      const name = isPending(t)
-        ? '<span class="pending">заполняется…</span>'
-        : escape(t.name);
-
-      tr.innerHTML = `
-        <td class="num">${t.id}</td>
-        <td>${name}</td>
-        <td>${escape(t.location) || ''}</td>
-        <td>${tourDates(t)}</td>
-        <td class="num">${t.players_count}</td>
-        <td class="num">
-          <button class="icon danger" data-delete="${t.id}"
-                  title="Удалить турнир" aria-label="Удалить турнир ${t.id}">
-            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
-                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-              <path d="M4 7h16M10 4h4M9 7v12M15 7v12M6 7l1 13h10l1-13"/>
-            </svg>
-          </button>
-        </td>`;
-      tbody.appendChild(tr);
+    // выбранный турнир мог оказаться в свёрнутой части
+    if (selectedTour !== revealedTour) {
+      revealedTour = selectedTour;
+      if (finished.some((t) => t.id === selectedTour)) box.open = true;
     }
 
-    if (focused !== null) tbody.querySelector(`tr[data-tour="${focused}"]`)?.focus();
+    if (focused !== null) {
+      document.querySelector(`tr[data-tour="${focused}"]`)?.focus();
+    }
+  }
+
+  function fillTours(table, tours) {
+    const tbody = table.querySelector('tbody');
+    tbody.innerHTML = '';
+    for (const t of tours) tbody.appendChild(tourRow(t));
+  }
+
+  function tourRow(t) {
+    const tr = document.createElement('tr');
+    tr.className = t.id === selectedTour ? 'clickable selected' : 'clickable';
+    tr.dataset.tour = t.id;
+    tr.tabIndex = 0;
+    tr.title = t.id === selectedTour ? 'Скрыть участников' : 'Показать участников';
+
+    const name = isPending(t)
+      ? '<span class="pending">заполняется…</span>'
+      : escape(t.name);
+
+    tr.innerHTML = `
+      <td class="num">${t.id}</td>
+      <td>${name}</td>
+      <td>${escape(t.location) || ''}</td>
+      <td>${tourDates(t)}</td>
+      <td class="num">${t.players_count}</td>
+      <td class="num">
+        <button class="icon danger" data-delete="${t.id}"
+                title="Удалить турнир" aria-label="Удалить турнир ${t.id}">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor"
+               stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 7h16M10 4h4M9 7v12M15 7v12M6 7l1 13h10l1-13"/>
+          </svg>
+        </button>
+      </td>`;
+    return tr;
+  }
+
+  function tourWord(n) {
+    const t = n % 10, h = n % 100;
+    if (t === 1 && h !== 11) return 'турнир';
+    if (t >= 2 && t <= 4 && (h < 12 || h > 14)) return 'турнира';
+    return 'турниров';
   }
 
   function escape(s) {

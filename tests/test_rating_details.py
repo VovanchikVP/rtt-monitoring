@@ -68,3 +68,84 @@ async def test_raises_on_error_status(api, http, status):
         await FillPointsService.fetch_rating_details(http, PLAYER_ID)
 
     assert exc.value.status == status
+
+
+# ---- разбор списка турниров из того же ответа ----
+
+# фрагмент настоящего ответа API
+TOUR = {
+    "id": 20020101,
+    "rating_id": 202610011,
+    "player_id": PLAYER_ID,
+    "tour_id": 305042,
+    "name": "Первенство Хабаровского края",
+    "city": "Хабаровск",
+    "date": "2026-06-01",
+    "rank": 226,
+    "category": "III А",
+    "result": 4,
+    "pos": "25-32",
+    "points": 9,
+}
+
+
+def details(tours: list[dict]) -> dict:
+    return {"data": {"rating.details": {"rating": {"points": 1}, "tours": tours}}}
+
+
+def test_parses_tour_result():
+    assert FillPointsService.get_tours(details([TOUR])) == [
+        {
+            "tour_id": 305042,
+            "name": "Первенство Хабаровского края",
+            "city": "Хабаровск",
+            "date": date(2026, 6, 1),
+            "position": "25-32",
+            "points": 9,
+        }
+    ]
+
+
+def test_keeps_place_range_as_string():
+    # место бывает и одиночным, и диапазоном — в базе это строка
+    single = FillPointsService.get_tours(details([{**TOUR, "pos": "10"}]))
+    assert single[0]["position"] == "10"
+
+
+def test_numeric_place_becomes_string():
+    assert FillPointsService.get_tours(details([{**TOUR, "pos": 10}]))[0]["position"] == "10"
+
+
+@pytest.mark.parametrize("empty", [None, ""])
+def test_missing_place_is_none(empty):
+    assert FillPointsService.get_tours(details([{**TOUR, "pos": empty}]))[0]["position"] is None
+
+
+def test_tour_date_fills_both_bounds():
+    # в этом блоке у турнира одна дата — она же начало и конец
+    tour = FillPointsService.get_tours(details([TOUR]))[0]
+    assert tour["date"] == date(2026, 6, 1)
+
+
+def test_bad_date_becomes_none():
+    assert FillPointsService.get_tours(details([{**TOUR, "date": "1900-01-01"}]))[0]["date"] is None
+
+
+def test_skips_entries_without_tour_id():
+    assert FillPointsService.get_tours(details([{**TOUR, "tour_id": None}])) == []
+
+
+def test_deduplicates_by_tour_id():
+    # побеждает последняя запись: дальше по месяцам идёт более свежий ответ
+    tours = FillPointsService.get_tours(details([TOUR, {**TOUR, "points": 42}]))
+    assert len(tours) == 1
+    assert tours[0]["points"] == 42
+
+
+@pytest.mark.parametrize("payload", [{}, {"data": {}}, {"data": {"rating.details": {}}}])
+def test_answer_without_tours_gives_empty_list(payload):
+    assert FillPointsService.get_tours(payload) == []
+
+
+def test_null_tours_gives_empty_list():
+    assert FillPointsService.get_tours({"data": {"rating.details": {"tours": None}}}) == []

@@ -62,10 +62,16 @@ class FillRatingHistoryService:
         logger.info("Игрок %s: месяцев без рейтинга %s", player_id, len(missing))
         timeout = aiohttp.ClientTimeout(total=HTTP_TIMEOUT)
         async with aiohttp.ClientSession(timeout=timeout) as http:
-            points = await cls.collect_points(http, player_id, missing)
+            points, tours = await cls.collect(http, player_id, missing)
 
         added = await cls.add_points(player_id, points) if points else 0
-        logger.info("Игрок %s: добавлено записей рейтинга %s", player_id, added)
+        details = await FillPointsService.save_rating_details(player_id, tours)
+        logger.info(
+            "Игрок %s: добавлено записей рейтинга %s, результатов турниров %s",
+            player_id,
+            added,
+            details,
+        )
         return added
 
     @classmethod
@@ -102,11 +108,18 @@ class FillRatingHistoryService:
         return [month for month in months if (month.year, month.month) not in filled]
 
     @classmethod
-    async def collect_points(
+    async def collect(
         cls, http: aiohttp.ClientSession, player_id: int, months: list[date]
-    ) -> dict[date, int]:
-        """Запросить очки по каждому месяцу, выдерживая паузу между запросами."""
+    ) -> tuple[dict[date, int], list[dict]]:
+        """Запросить каждый месяц, выдерживая паузу между запросами.
+
+        Возвращает очки по месяцам и результаты по турнирам. Списки турниров
+        соседних месяцев пересекаются, а очки за турнир со временем
+        пересчитываются: месяцы идут от старых к новым, поэтому побеждает
+        самый свежий ответ.
+        """
         points: dict[date, int] = {}
+        tours: dict[int, dict] = {}
         for number, month in enumerate(months):
             if number:
                 await cls.pause()
@@ -120,8 +133,10 @@ class FillRatingHistoryService:
                 continue
 
             points[month] = FillPointsService.get_points(data)
+            for tour in FillPointsService.get_tours(data):
+                tours[tour["tour_id"]] = tour
 
-        return points
+        return points, list(tours.values())
 
     @classmethod
     async def pause(cls) -> None:
