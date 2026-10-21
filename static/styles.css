@@ -1,0 +1,117 @@
+:root {
+  --bg: #f6f7f9;
+  --card: #ffffff;
+  --text: #1c1f23;
+  --muted: #6b7280;
+  --line: #e3e6ea;
+  --accent: #2f6feb;
+  --danger: #c0392b;
+  --pending: #b45309;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16181c;
+    --card: #1e2126;
+    --text: #e8eaed;
+    --muted: #9aa0a6;
+    --line: #2c3036;
+    --accent: #6ea0ff;
+    --danger: #ef6a5a;
+    --pending: #e0a44a;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 24px 16px 48px;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+.wrap { max-width: 980px; margin: 0 auto; }
+h1 { font-size: 20px; margin: 0 0 4px; }
+.sub { color: var(--muted); font-size: 13px; margin-bottom: 20px; }
+.card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+input, button {
+  font: inherit;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  padding: 8px 12px;
+  background: var(--card);
+  color: var(--text);
+}
+input { width: 180px; }
+button { cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.link {
+  border: none; background: none; color: var(--accent); padding: 4px 6px;
+}
+button.link.danger { color: var(--danger); }
+button.icon {
+  border: none; background: none; padding: 5px; border-radius: 6px;
+  display: inline-flex; line-height: 0; color: var(--muted);
+}
+button.icon.danger:hover, button.icon.danger:focus-visible {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+}
+button:disabled { opacity: .5; cursor: default; }
+.msg { margin-top: 10px; font-size: 13px; min-height: 18px; }
+.msg.error { color: var(--danger); }
+.msg.ok { color: var(--muted); }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; }
+td.num, th.num { text-align: right; white-space: nowrap; }
+tbody tr.clickable { cursor: pointer; }
+tbody tr.clickable:hover td { background: color-mix(in srgb, var(--text) 5%, transparent); }
+tbody tr.clickable:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* правило идёт после hover: выделение выбранной строки должно его перебивать */
+tr.selected td { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.pending { color: var(--pending); }
+.empty { color: var(--muted); padding: 12px 2px; }
+.head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 10px; }
+.head h2 { font-size: 15px; margin: 0; }
+.status { font-size: 12px; color: var(--muted); }
+.dot {
+  display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--pending); margin-right: 6px; vertical-align: middle;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+@keyframes pulse { 0%, 100% { opacity: 1 } 50% { opacity: .25 } }
+.wide { overflow-x: auto; }
+details.done { margin-top: 10px; border-top: 1px solid var(--line); }
+details.done > summary {
+  cursor: pointer; color: var(--muted); font-size: 13px;
+  padding: 10px 2px 4px; display: flex; align-items: center; gap: 7px;
+  list-style: none;
+}
+details.done > summary::-webkit-details-marker { display: none; }
+details.done > summary::before {
+  content: '▸'; display: inline-block; transition: transform .15s ease;
+}
+details.done[open] > summary::before { transform: rotate(90deg); }
+details.done > summary:hover { color: var(--text); }
+details.done > summary:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px;
+}
+details.done .wide { margin-bottom: 4px; }
+/* строка с графиком не кликабельна и не подсвечивается при наведении */
+tr.chart-row td { padding-top: 0; border-bottom: 1px solid var(--line); }
+.chart { width: 100%; }
+.chart svg { display: block; width: 100%; height: 100%; }
+.chart .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.chart .dot { fill: var(--card); stroke: var(--accent); stroke-width: 2; }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .label { fill: var(--muted); font-size: 10px; }
+.chart .note {
+  display: flex; align-items: center; height: 100%;
+  color: var(--muted); font-size: 13px;
+}
