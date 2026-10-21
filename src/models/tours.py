@@ -1,11 +1,13 @@
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     Column,
     Date,
     ForeignKey,
     Integer,
     String,
     Table,
+    false,
 )
 from sqlalchemy.orm import relationship
 
@@ -32,6 +34,7 @@ class Tours(Base):
     begin_date = Column(Date, nullable=True)
     end_date = Column(Date, nullable=True)
     tour_members = Column(Integer, nullable=True)
+    is_finished = Column(Boolean, nullable=False, default=False, server_default=false())
 
     players = relationship(
         "Players",
