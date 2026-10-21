@@ -149,3 +149,40 @@ def test_answer_without_tours_gives_empty_list(payload):
 
 def test_null_tours_gives_empty_list():
     assert FillPointsService.get_tours({"data": {"rating.details": {"tours": None}}}) == []
+
+
+# ---- рейтинг-лист текущего месяца ещё не опубликован ----
+
+# рейтинг за текущий месяц появляется не с первого числа: до этого API отдаёт
+# карточку без рейтинга, и ноль в ней значит «данных пока нет»
+
+
+def test_zero_for_current_month_before_publication_is_pending():
+    assert FillPointsService.is_rating_pending(date(2026, 3, 1), 0, date(2026, 3, 5)) is True
+
+
+def test_zero_for_current_month_after_publication_is_real():
+    assert FillPointsService.is_rating_pending(date(2026, 3, 1), 0, date(2026, 3, 12)) is False
+
+
+def test_nonzero_for_current_month_is_always_real():
+    assert FillPointsService.is_rating_pending(date(2026, 3, 1), 480, date(2026, 3, 5)) is False
+
+
+def test_zero_for_past_month_is_real():
+    # список давно опубликован, игрока в нём просто нет
+    assert FillPointsService.is_rating_pending(date(2026, 2, 1), 0, date(2026, 3, 5)) is False
+
+
+def test_zero_for_future_month_is_not_pending():
+    assert FillPointsService.is_rating_pending(date(2026, 4, 1), 0, date(2026, 3, 5)) is False
+
+
+def test_same_month_of_another_year_is_not_current():
+    assert FillPointsService.is_rating_pending(date(2025, 3, 1), 0, date(2026, 3, 5)) is False
+
+
+def test_publication_day_is_the_twelfth():
+    assert FillPointsService.RATING_PUBLISHED_DAY == 12
+    assert FillPointsService.is_rating_pending(date(2026, 3, 1), 0, date(2026, 3, 11)) is True
+    assert FillPointsService.is_rating_pending(date(2026, 3, 1), 0, date(2026, 3, 12)) is False

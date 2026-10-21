@@ -215,3 +215,60 @@ async def test_failed_month_does_not_lose_tours_of_the_others(api, http):
     _, tours = await FillRatingHistoryService.collect(http, PLAYER_ID, MONTHS)
 
     assert sorted(t["tour_id"] for t in tours) == [1, 3]
+
+
+# ---- текущий месяц до публикации рейтинг-листа ----
+
+# месяцы истории: январь, февраль и текущий март
+MARCH = date(2026, 3, 1)
+
+
+async def test_skips_zero_of_current_month_before_publication(api, http, freeze_date):
+    freeze_date(fill_rating_history, date(2026, 3, 5))
+    api.reply(rating(100))
+    api.reply(rating(200))
+    api.reply(rating(None))  # рейтинг-листа за март ещё нет
+
+    points, _ = await FillRatingHistoryService.collect(http, PLAYER_ID, MONTHS)
+
+    # март не записан: ноль закрыл бы месяц, и настоящие очки сюда не попали бы
+    assert points == {MONTHS[0]: 100, MONTHS[1]: 200}
+    assert MARCH not in points
+
+
+async def test_writes_zero_of_current_month_after_publication(api, http, freeze_date):
+    freeze_date(fill_rating_history, date(2026, 3, 12))
+    api.always(rating(None))
+
+    points, _ = await FillRatingHistoryService.collect(http, PLAYER_ID, MONTHS)
+
+    assert points == {MONTHS[0]: 0, MONTHS[1]: 0, MARCH: 0}
+
+
+async def test_zero_of_past_month_is_written_even_before_the_twelfth(api, http, freeze_date):
+    freeze_date(fill_rating_history, date(2026, 3, 5))
+    api.always(rating(None))
+
+    points, _ = await FillRatingHistoryService.collect(http, PLAYER_ID, MONTHS[:2])
+
+    # февральский список давно опубликован — ноль настоящий
+    assert points == {MONTHS[0]: 0, MONTHS[1]: 0}
+
+
+async def test_real_points_of_current_month_are_written_before_the_twelfth(api, http, freeze_date):
+    freeze_date(fill_rating_history, date(2026, 3, 5))
+    api.always(rating(480))
+
+    points, _ = await FillRatingHistoryService.collect(http, PLAYER_ID, MONTHS)
+
+    assert points[MARCH] == 480
+
+
+async def test_tours_of_current_month_are_kept_even_when_points_are_skipped(api, http, freeze_date):
+    freeze_date(fill_rating_history, date(2026, 3, 5))
+    api.reply(rating(None, [tour(1, 10)]))
+
+    points, tours = await FillRatingHistoryService.collect(http, PLAYER_ID, [MARCH])
+
+    assert points == {}
+    assert [t["tour_id"] for t in tours] == [1]

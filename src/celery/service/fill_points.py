@@ -24,6 +24,11 @@ class FillPointsService:
     а незнакомые турниры попутно заводятся в `tours`.
     """
 
+    # до этого числа рейтинг-лист текущего месяца может быть ещё не опубликован:
+    # API отдаёт карточку без рейтинга, и ноль в ней означает не «нисколько очков»,
+    # а «данных пока нет». Записанный ноль закрыл бы месяц навсегда
+    RATING_PUBLISHED_DAY = 12
+
     @classmethod
     async def run(cls) -> None:
         """Добрать очки по всем игрокам без записи за текущий месяц."""
@@ -61,11 +66,20 @@ class FillPointsService:
         data = await cls.fetch_rating_details(http, player_id)
         points = cls.get_points(data)
 
+        today = date.today()
+        if cls.is_rating_pending(today, points, today):
+            logger.info(
+                "Игрок %s: рейтинг за текущий месяц ещё не опубликован, очки не пишем", player_id
+            )
+            # турниры лежат в том же ответе и от публикации рейтинга не зависят
+            await cls.save_rating_details(player_id, cls.get_tours(data))
+            return 0
+
         async with async_session() as session:
             # параллельный запуск задачи мог успеть записать очки раньше
             result = await session.execute(
                 insert(Points)
-                .values(players_id=player_id, date=date.today(), points=points)
+                .values(players_id=player_id, date=today, points=points)
                 .on_conflict_do_nothing(index_elements=["players_id", "date"])
             )
             await session.commit()
@@ -100,6 +114,19 @@ class FillPointsService:
         """Очки игрока из ответа `rating.details`; без рейтинга считаем 0."""
         rating = data.get("data", {}).get("rating.details", {}).get("rating") or {}
         return rating.get("points") or 0
+
+    @classmethod
+    def is_rating_pending(cls, month: date, points: int, today: date) -> bool:
+        """Ноль за текущий месяц до публикации рейтинг-листа — ещё не данные.
+
+        За прошлые месяцы ноль настоящий: список давно опубликован, и игрока
+        в нём просто нет. Такой ноль записывается как обычно.
+        """
+        return (
+            points == 0
+            and today.day < cls.RATING_PUBLISHED_DAY
+            and (month.year, month.month) == (today.year, today.month)
+        )
 
     @classmethod
     def get_tours(cls, data: dict) -> list[dict]:

@@ -117,9 +117,13 @@ class FillRatingHistoryService:
         соседних месяцев пересекаются, а очки за турнир со временем
         пересчитываются: месяцы идут от старых к новым, поэтому побеждает
         самый свежий ответ.
+
+        Текущий месяц до публикации рейтинг-листа пропускается — см.
+        `FillPointsService.is_rating_pending`.
         """
         points: dict[date, int] = {}
         tours: dict[int, dict] = {}
+        today = date.today()
         for number, month in enumerate(months):
             if number:
                 await cls.pause()
@@ -132,7 +136,14 @@ class FillRatingHistoryService:
                 logger.exception("Не удалось получить рейтинг игрока %s за %s", player_id, month)
                 continue
 
-            points[month] = FillPointsService.get_points(data)
+            value = FillPointsService.get_points(data)
+            if FillPointsService.is_rating_pending(month, value, today):
+                # рейтинг-лист текущего месяца ещё не опубликован: ноль закрыл бы
+                # месяц, и настоящие очки сюда уже не попали бы
+                logger.info("Игрок %s: рейтинг за %s ещё не опубликован", player_id, month)
+            else:
+                points[month] = value
+
             for tour in FillPointsService.get_tours(data):
                 tours[tour["tour_id"]] = tour
 
