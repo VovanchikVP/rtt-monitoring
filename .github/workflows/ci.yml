@@ -48,8 +48,14 @@ jobs:
       - name: Поставить зависимости
         run: uv sync --frozen
 
-      # внешний API и база не нужны: запросы уходят на локальную заглушку
+      # внешний API и база не нужны: запросы уходят на локальную заглушку,
+      # но Settings читает параметры подключения на импорте — задаём заглушки
       - name: pytest
+        env:
+          APP_DB_USER: ci
+          APP_DB_PASSWORD: ci
+          APP_DB_HOST: localhost
+          APP_DB_NAME: ci
         run: uv run pytest -q
 
   manifests:
