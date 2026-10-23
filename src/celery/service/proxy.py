@@ -8,13 +8,15 @@ class ProxyService:
     URL = (
         "https://cdn.jsdelivr.net/gh/proxifly/free-proxy-list@main/proxies/protocols/http/data.txt"
     )
-    TEST_URL = "http://httpbin.org/ip"
+    TEST_URL = "http://api.ipify.org"
+
     MAX_RETRIES = 10
     TIME_SLIP = 15
 
     def __init__(self):
         self.proxies = []
         self.run_creating_pool = None
+        self.base_ip = None
 
     @property
     def need_create_pool(self) -> bool:
@@ -23,6 +25,7 @@ class ProxyService:
     async def create_pool(self):
         """Формирование рабочего пула proxies"""
         async with aiohttp.ClientSession() as s:
+            await self._base_ip(s)
             text = await (await s.get(self.URL)).text()
             proxies = [p if "://" in p else f"http://{p}" for p in text.split()]
             sem = asyncio.Semaphore(100)
@@ -43,8 +46,8 @@ class ProxyService:
         async with aiohttp.ClientSession() as s:
             if self.proxies:
                 proxy = random.choice(self.proxies)
-                if proxy := await self._check(s, proxy):
-                    return proxy
+                if res := await self._check(s, proxy):
+                    return res
                 else:
                     self.proxies.remove(proxy)
                     if self.need_create_pool:
@@ -58,12 +61,25 @@ class ProxyService:
             if proxy := await self._check(session, proxy):
                 self.proxies.append(proxy)
 
+    async def _base_ip(self, session):
+        try:
+            async with session.get(self.TEST_URL, timeout=aiohttp.ClientTimeout(total=5)) as r:
+                if r.status == 200:
+                    self.base_ip = await r.text()
+        except Exception:
+            pass
+
     async def _check(self, session, proxy):
         try:
             async with session.get(
                 self.TEST_URL, proxy=proxy, timeout=aiohttp.ClientTimeout(total=5)
             ) as r:
                 if r.status == 200:
+                    base_ip = await r.text()
+                    if self.base_ip == base_ip:
+                        raise Exception()
+                    [int(i) for i in base_ip.split(".")]
+                    print(await r.text(), proxy, sep="\n")
                     return proxy
         except Exception:
             pass
