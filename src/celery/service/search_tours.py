@@ -8,8 +8,9 @@ import aiohttp
 from sqlalchemy.dialects.postgresql import insert
 
 from src.celery.app import celery_app
+from src.celery.service.api import post
 from src.celery.service.response import get_node
-from src.const import API_URL, HEADERS, HTTP_TIMEOUT
+from src.const import HTTP_TIMEOUT
 from src.models import SearchSettings, Tours
 from src.models.base import async_session
 
@@ -181,9 +182,7 @@ class SearchToursService:
         if location_id is not None:
             form.append(("location_id", str(location_id)))
 
-        async with http.post(API_URL, data=form, headers=HEADERS) as resp:
-            resp.raise_for_status()
-            return await resp.json(content_type=None)
+        return await post(http, form)
 
     @classmethod
     def get_page_tour_ids(cls, data: dict) -> list[int]:

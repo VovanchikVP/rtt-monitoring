@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from src.celery.app import celery_app
+from src.celery.service.api import ThrottledError
 from src.celery.service.fill_points import FillPointsService
 from src.const import HTTP_TIMEOUT, REQUEST_DELAY
 from src.models import Points
@@ -131,6 +132,9 @@ class FillRatingHistoryService:
                 data = await FillPointsService.fetch_rating_details(
                     http, player_id, FillPointsService.get_rating_id(month)
                 )
+            except ThrottledError:
+                # следующий месяц упрётся в ту же проверку — откладываем задачу
+                raise
             except Exception:
                 # один сбойный месяц не должен ронять остальные
                 logger.exception("Не удалось получить рейтинг игрока %s за %s", player_id, month)

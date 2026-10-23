@@ -6,10 +6,11 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.celery.service.api import ThrottledError, post
 from src.celery.service.dates import parse_date
 from src.celery.service.fill_rating_history import FillRatingHistoryService
 from src.celery.service.response import get_node
-from src.const import API_URL, HEADERS, HTTP_TIMEOUT
+from src.const import HTTP_TIMEOUT
 from src.models import Players, Tours, tours_players
 from src.models.base import async_session
 
@@ -37,6 +38,9 @@ class FillToursService:
             for tour_id in tour_ids:
                 try:
                     await cls.fill_tour(http, tour_id)
+                except ThrottledError:
+                    # следующий турнир упрётся в ту же проверку — откладываем задачу
+                    raise
                 except Exception:
                     # один сбойный турнир не должен ронять остальные
                     logger.exception("Не удалось заполнить турнир %s", tour_id)
@@ -83,9 +87,7 @@ class FillToursService:
             ("tour_id", str(tour_id)),
             ("part[0]", "players"),
         ]
-        async with http.post(API_URL, data=form, headers=HEADERS) as resp:
-            resp.raise_for_status()
-            return await resp.json(content_type=None)
+        return await post(http, form)
 
     @classmethod
     def get_tour_main(cls, data: dict) -> dict:

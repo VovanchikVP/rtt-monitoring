@@ -5,6 +5,7 @@ import aiohttp
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.celery.service.api import ThrottledError
 from src.celery.service.fill_rating_history import FillRatingHistoryService
 from src.celery.service.fill_tours import FillToursService
 from src.const import HTTP_TIMEOUT
@@ -37,6 +38,9 @@ class SyncToursService:
             for tour_id in tour_ids:
                 try:
                     new_players += await cls.sync_tour(http, tour_id)
+                except ThrottledError:
+                    # следующий турнир упрётся в ту же проверку — откладываем задачу
+                    raise
                 except Exception:
                     # один сбойный турнир не должен ронять остальные
                     logger.exception("Не удалось сверить состав турнира %s", tour_id)

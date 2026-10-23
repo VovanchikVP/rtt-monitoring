@@ -16,11 +16,8 @@ import pytest_asyncio
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 
-from src.celery.service import fill_matches, fill_points, fill_tours, search_tours
+from src.celery.service import api as api_client
 from src.const import HTTP_TIMEOUT
-
-# модули, в которых адрес API надо подменить на локальный сервер
-API_MODULES = (fill_matches, fill_points, fill_tours, search_tours)
 
 
 @dataclass
@@ -106,8 +103,8 @@ async def api(monkeypatch):
     server = TestServer(app)
     await server.start_server()
     fake.url = str(server.make_url("/api/v1/public"))
-    for module in API_MODULES:
-        monkeypatch.setattr(module, "API_URL", fake.url)
+    # все запросы идут через один клиент — подменять адрес нужно только в нём
+    monkeypatch.setattr(api_client, "API_URL", fake.url)
 
     yield fake
 

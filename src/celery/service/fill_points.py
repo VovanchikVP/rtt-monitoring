@@ -6,9 +6,10 @@ import aiohttp
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from src.celery.service.api import ThrottledError, post
 from src.celery.service.dates import parse_date
 from src.celery.service.response import get_node
-from src.const import API_URL, HEADERS, HTTP_TIMEOUT
+from src.const import HTTP_TIMEOUT
 from src.models import Players, Points, RatingDetails, Tours
 from src.models.base import async_session
 
@@ -45,6 +46,9 @@ class FillPointsService:
             for player_id in player_ids:
                 try:
                     added += await cls.fill_points(http, player_id)
+                except ThrottledError:
+                    # следующий игрок упрётся в ту же проверку — откладываем задачу
+                    raise
                 except Exception:
                     # один сбойный игрок не должен ронять остальных
                     logger.exception("Не удалось получить очки игрока %s", player_id)
@@ -101,9 +105,7 @@ class FillPointsService:
             ("rating_id", rating_id or cls.get_rating_id()),
             ("player_id", str(player_id)),
         ]
-        async with http.post(API_URL, data=form, headers=HEADERS) as resp:
-            resp.raise_for_status()
-            return await resp.json(content_type=None)
+        return await post(http, form)
 
     @classmethod
     def get_rating_id(cls, month: date | None = None) -> str:

@@ -31,3 +31,8 @@ class Matches(Base):
     # состояние матча, как его отдаёт API
     status = Column(String, nullable=True)
     date = Column(Date, nullable=True)
+    # этап турнира, в котором сыгран матч, — «Основной турнир»
+    stage_name = Column(String, nullable=True)
+    # круг, на котором сыгран матч, и сколько их всего в сетке
+    round_on = Column(Integer, nullable=True)
+    rounds = Column(Integer, nullable=True)

@@ -22,6 +22,9 @@ class MatchRead(BaseModel):
     status: str | None = Field(default=None, description="Состояние матча")
     # datetime.date, а не date: поле с таким же именем затенило бы импорт типа
     date: datetime.date | None = Field(default=None, description="Дата матча")
+    stage_name: str | None = Field(default=None, description="Этап турнира")
+    round_on: int | None = Field(default=None, description="Круг, на котором сыгран матч")
+    rounds: int | None = Field(default=None, description="Сколько кругов в сетке")
 
 
 class PlayerMatchRead(BaseModel):

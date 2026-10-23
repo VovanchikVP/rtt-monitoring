@@ -34,6 +34,9 @@ MATCH = {
     "status": 1280,
     "status_v": "finished",
     "status_n": "Завершен",
+    "stage_name": "Основной турнир",
+    "round_on": 2,
+    "rounds": 5,
 }
 
 
@@ -105,6 +108,9 @@ def test_parses_match():
             "score": "6-0,6-1",
             "status": "Завершен",
             "date": date(2026, 6, 1),
+            "stage_name": "Основной турнир",
+            "round_on": 2,
+            "rounds": 5,
         }
     ]
 
@@ -192,11 +198,14 @@ CELL = {
     "stime": "10:30:00",
     "match_status_v": "finished",
     "match_finished": 1,
+    "stage_name": "Основной турнир",
+    "round_on": 2,
 }
 
 
-def grid(cells: list[dict]) -> dict:
-    return {"data": {"tour.card.grid": {"grids": [{"grid_id": 13753, "cells": cells}]}}}
+def grid(cells: list[dict], **fields: object) -> dict:
+    one = {"grid_id": 13753, "rounds": 5, "cells": cells, **fields}
+    return {"data": {"tour.card.grid": {"grids": [one]}}}
 
 
 async def test_grid_request_has_expected_form(api, http):
@@ -221,6 +230,10 @@ def test_parses_grid_cell():
             "score": "2-6,1-6",
             "status": "finished",
             "date": date(2026, 9, 21),
+            "stage_name": "Основной турнир",
+            "round_on": 2,
+            # число кругов задано у сетки целиком, в ячейке его нет
+            "rounds": 5,
         }
     ]
 
@@ -251,6 +264,9 @@ def test_unplayed_cell_has_no_score():
             "score": None,
             "status": "finished",
             "date": None,
+            "stage_name": "Основной турнир",
+            "round_on": 2,
+            "rounds": 5,
         }
     ]
 
@@ -292,6 +308,45 @@ def test_answer_without_grids_gives_empty_list(payload):
 
 def test_grid_without_cells_gives_empty_list():
     assert FillMatchesService.get_grid_matches(grid(None), TOUR_ID) == []
+
+
+# ---- этап и круги ----
+
+
+def test_cell_rounds_win_over_the_grid():
+    # у ячейки своё число кругов встречается не всегда, но если есть — оно главнее
+    match = FillMatchesService.get_grid_matches(grid([{**CELL, "rounds": 3}]), TOUR_ID)[0]
+    assert match["rounds"] == 3
+
+
+def test_grid_without_rounds_leaves_the_field_empty():
+    data = {"data": {"tour.card.grid": {"grids": [{"grid_id": 1, "cells": [CELL]}]}}}
+    assert FillMatchesService.get_grid_matches(data, TOUR_ID)[0]["rounds"] is None
+
+
+@pytest.mark.parametrize("field", ["stage_name", "round_on"])
+def test_missing_stage_and_round_become_none(field):
+    cell = {k: v for k, v in CELL.items() if k != field}
+    assert FillMatchesService.get_grid_matches(grid([cell]), TOUR_ID)[0][field] is None
+
+
+def test_empty_stage_name_becomes_none():
+    match = FillMatchesService.get_matches(card([{**MATCH, "stage_name": ""}]), TOUR_ID)[0]
+    assert match["stage_name"] is None
+
+
+@pytest.mark.parametrize(("value", "expected"), [("3", 3), (3, 3), (None, None), ("", None)])
+def test_round_is_read_as_a_number(value, expected):
+    match = FillMatchesService.get_matches(card([{**MATCH, "round_on": value}]), TOUR_ID)[0]
+    assert match["round_on"] == expected
+
+
+def test_non_numeric_round_is_skipped_with_a_warning(caplog):
+    # поле необязательное: лучше пропустить его, чем уронить разбор турнира
+    match = FillMatchesService.get_matches(card([{**MATCH, "rounds": "четыре"}]), TOUR_ID)[0]
+
+    assert match["rounds"] is None
+    assert "четыре" in caplog.text
 
 
 # ---- этапы турнира ----

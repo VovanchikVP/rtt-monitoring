@@ -8,10 +8,11 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from src.celery.app import celery_app
+from src.celery.service.api import ThrottledError, post
 from src.celery.service.dates import parse_date
 from src.celery.service.fill_rating_history import FillRatingHistoryService
 from src.celery.service.response import get_node
-from src.const import API_URL, HEADERS, HTTP_TIMEOUT, REQUEST_DELAY
+from src.const import HTTP_TIMEOUT, REQUEST_DELAY
 from src.models import Matches, Players, Tours
 from src.models.base import async_session
 
@@ -115,9 +116,7 @@ class FillMatchesService:
             # этапы нужны, чтобы знать, какие сетки запрашивать
             ("part[1]", "stages"),
         ]
-        async with http.post(API_URL, data=form, headers=HEADERS) as resp:
-            resp.raise_for_status()
-            return await resp.json(content_type=None)
+        return await post(http, form)
 
     @classmethod
     def get_matches(cls, data: dict, tour_id: int) -> list[dict]:
@@ -143,6 +142,9 @@ class FillMatchesService:
                     "score": match.get("score") or None,
                     "status": match.get("status_n") or None,
                     "date": parse_date(match.get("match_date")),
+                    "stage_name": match.get("stage_name") or None,
+                    "round_on": cls.as_int(match.get("round_on")),
+                    "rounds": cls.as_int(match.get("rounds")),
                 }
             )
         return parsed
@@ -164,6 +166,9 @@ class FillMatchesService:
                 await cls.pause()
             try:
                 data = await cls.fetch_stage_grid(http, tour_id, stage_id)
+            except ThrottledError:
+                # следующий этап упрётся в ту же проверку — откладываем задачу
+                raise
             except Exception:
                 # один сбойный этап не должен ронять остальные
                 logger.exception("Турнир %s: не удалось получить сетку этапа %s", tour_id, stage_id)
@@ -183,9 +188,7 @@ class FillMatchesService:
             ("tour_id", str(tour_id)),
             ("stage_id", str(stage_id)),
         ]
-        async with http.post(API_URL, data=form, headers=HEADERS) as resp:
-            resp.raise_for_status()
-            return await resp.json(content_type=None)
+        return await post(http, form)
 
     @classmethod
     def get_grid_matches(cls, data: dict, tour_id: int) -> list[dict]:
@@ -194,13 +197,13 @@ class FillMatchesService:
         parsed = []
         for grid in grids:
             for cell in grid.get("cells") or []:
-                match = cls.get_grid_match(cell, tour_id)
+                match = cls.get_grid_match(cell, tour_id, grid)
                 if match is not None:
                     parsed.append(match)
         return parsed
 
     @classmethod
-    def get_grid_match(cls, cell: dict, tour_id: int) -> dict | None:
+    def get_grid_match(cls, cell: dict, tour_id: int, grid: dict) -> dict | None:
         """Ячейка сетки в поля таблицы `matches`; None, если матча в ней нет."""
         # в сетке есть ячейки, куда игрок ещё не вышел: там стоит 0
         first = cell.get("m1p1") or None
@@ -227,7 +230,27 @@ class FillMatchesService:
             "status": cell.get("match_status_v") or None,
             # sdate — дата, на которую матч поставлен; «0», пока её нет
             "date": parse_date(cell.get("sdate")),
+            "stage_name": cell.get("stage_name") or None,
+            "round_on": cls.as_int(cell.get("round_on")),
+            # число кругов задано у сетки целиком, в ячейке его может не быть
+            "rounds": cls.as_int(cell.get("rounds") or grid.get("rounds")),
         }
+
+    @classmethod
+    def as_int(cls, value: object) -> int | None:
+        """Целое из ответа API; None, когда поля нет.
+
+        Про число кругов в ответе видели только числа, но поле необязательное
+        и у части турниров может прийти чем-то другим — такое лучше пропустить
+        с предупреждением, чем уронить разбор всего турнира.
+        """
+        if value is None or value == "":
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            logger.warning("Ожидалось целое число, API прислал %r", value)
+            return None
 
     @classmethod
     def clean_score(cls, score: str | None) -> str | None:
@@ -288,6 +311,9 @@ class FillMatchesService:
                 await cls.pause()
             try:
                 data = await cls.fetch_player(http, player_id)
+            except ThrottledError:
+                # следующий игрок упрётся в ту же проверку — откладываем задачу
+                raise
             except Exception:
                 # один сбойный игрок не должен ронять остальных
                 logger.exception("Не удалось получить карточку игрока %s", player_id)
@@ -317,9 +343,7 @@ class FillMatchesService:
             ("method[0]", "player.card.main"),
             ("player_id", str(player_id)),
         ]
-        async with http.post(API_URL, data=form, headers=HEADERS) as resp:
-            resp.raise_for_status()
-            return await resp.json(content_type=None)
+        return await post(http, form)
 
     @classmethod
     def get_player(cls, data: dict, player_id: int) -> dict | None:
