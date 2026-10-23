@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import app as app_module
 from src.models import Players
 from src.models.base import get_session
+from src.service import PlayersService
 
 PLAYER_ID = 101
 
@@ -122,3 +123,25 @@ def test_bad_limit_is_rejected(client, limit):
     response = client.get(f"/players/{PLAYER_ID}/matches", params={"limit": limit})
 
     assert response.status_code == 422
+
+
+# ---- разделитель сетов ----
+
+# в сетке турнира счёт приходит через запятую, в расписании — через пробел;
+# наружу он должен выглядеть одинаково
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"),
+    [("2-6,1-6", "2-6 1-6"), ("2-6 1-6", "2-6 1-6"), ("6-4, 3-6, 7-5", "6-4 3-6 7-5")],
+)
+def test_sets_are_always_separated_by_space(stored, expected):
+    row = Row(date(2026, 10, 12), "Петров Пётр Петрович", PLAYER_ID, 2, 1, stored, PLAYER_ID)
+    assert PlayersService.as_player_match(row, PLAYER_ID).games == expected
+
+
+def test_comma_separated_score_is_flipped_for_the_second_player():
+    row = Row(date(2026, 10, 12), "Петров Пётр Петрович", 202, 2, 0, "6-0,7-6(5)", 202)
+    match = PlayersService.as_player_match(row, PLAYER_ID)
+    assert match.games == "0-6 6-7(5)"
+    assert match.sets == "0-2"

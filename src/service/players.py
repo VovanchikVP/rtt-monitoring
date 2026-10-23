@@ -25,6 +25,8 @@ class PlayersService:
 
     # счёт сета — «6-4», иногда с тай-брейком — «7-6(5)»
     SET_SCORE = re.compile(r"^(\d+)-(\d+)(.*)$")
+    # в базе сеты разделены так, как их отдало API: где запятой, где пробелом
+    SET_SPLIT = re.compile(r"[,\s]+")
 
     @classmethod
     async def get_points(cls, session: AsyncSession, player_id: int) -> list[PlayerPointRead]:
@@ -87,7 +89,7 @@ class PlayersService:
             date=row.date,
             opponent=row.opponent,
             sets=cls.sets_score(row.first_score, row.second_score, mine),
-            games=(row.score or None) if mine else cls.flip_games(row.score),
+            games=cls.games_score(row.score, mine),
             won=None if row.winner_player_id is None else row.winner_player_id == player_id,
         )
 
@@ -99,12 +101,20 @@ class PlayersService:
         return f"{first}-{second}" if mine else f"{second}-{first}"
 
     @classmethod
-    def flip_games(cls, score: str | None) -> str | None:
-        """Развернуть счёт по геймам: в базе он со стороны первого игрока."""
+    def games_score(cls, score: str | None, mine: bool) -> str | None:
+        """Счёт по геймам «6-4 3-6 7-5»; при `mine=False` разворачивается.
+
+        Разделитель сетов приводится к пробелу: наружу счёт выглядит
+        одинаково, из какого бы источника он ни пришёл.
+        """
         if not score:
             return None
-        # сет непонятного вида оставляем как есть — лучше так, чем потерять
-        return " ".join(cls.SET_SCORE.sub(r"\2-\1\3", part) for part in score.split())
+
+        sets = [part for part in cls.SET_SPLIT.split(score.strip()) if part]
+        if not mine:
+            # сет непонятного вида оставляем как есть — лучше так, чем потерять
+            sets = [cls.SET_SCORE.sub(r"\2-\1\3", part) for part in sets]
+        return " ".join(sets) or None
 
     @classmethod
     async def get_player(cls, session: AsyncSession, player_id: int) -> Players:
