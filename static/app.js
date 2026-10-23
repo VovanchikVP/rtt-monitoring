@@ -4,9 +4,10 @@ let selectedTour = null;
 // карточки турниров из последнего ответа /tours: нужны заголовку состава,
 // в /tours/{id}/players названия турнира нет
 const toursById = new Map();
-// раскрытые графики: id игрока → { loading } | { points } | { error }.
+// раскрытые игроки: id → { points, matches }, где каждая половина —
+// { loading } | { data } | { error }. Слева от графика идут последние матчи.
 // Каждый игрок открывается и закрывается сам по себе, их может быть сколько угодно
-const charts = new Map();
+const opened = new Map();
 
 const $ = (id) => document.getElementById(id);
 const fmtDate = (d) => d ? d.split('-').reverse().join('.') : null;
@@ -170,8 +171,8 @@ async function loadPlayers(tourId, silent = false) {
   if (!resp.ok) throw new Error(`GET players → ${resp.status}`);
   const players = await resp.json();
 
-  // графики относятся к составу конкретного турнира
-  if (tourId !== selectedTour) charts.clear();
+  // раскрытые строки относятся к составу конкретного турнира
+  if (tourId !== selectedTour) opened.clear();
 
   selectedTour = tourId;
   location.hash = `tour=${tourId}`;   // состав можно открыть по прямой ссылке
@@ -194,21 +195,21 @@ function renderPlayers(players) {
   const focused = document.activeElement?.closest?.('tr[data-player]')?.dataset.player ?? null;
   tbody.innerHTML = '';
 
-  // график мог остаться открытым у игрока, которого больше нет в составе
+  // строка могла остаться раскрытой у игрока, которого больше нет в составе
   const present = new Set(players.map((p) => String(p.id)));
-  for (const id of charts.keys()) {
-    if (!present.has(id)) charts.delete(id);
+  for (const id of opened.keys()) {
+    if (!present.has(id)) opened.delete(id);
   }
 
   for (const p of players) {
     const id = String(p.id);
-    const open = charts.has(id);
+    const open = opened.has(id);
 
     const tr = document.createElement('tr');
     tr.className = open ? 'clickable selected' : 'clickable';
     tr.dataset.player = id;
     tr.tabIndex = 0;
-    tr.title = open ? 'Скрыть график рейтинга' : 'Показать график рейтинга';
+    tr.title = open ? CLOSE_HINT : OPEN_HINT;
     tr.setAttribute('aria-expanded', open ? 'true' : 'false');
     tr.innerHTML = `
       <td class="num">${p.number}</td>
@@ -218,83 +219,138 @@ function renderPlayers(players) {
       <td class="num">${p.points}</td>`;
     tbody.appendChild(tr);
 
-    // график вставляется следующей строкой, прямо под своим игроком
-    if (open) tbody.appendChild(chartRow(id, tr));
+    // матчи и график вставляются следующей строкой, прямо под своим игроком
+    if (open) tbody.appendChild(detailsRow(id, tr));
   }
 
   if (focused !== null) tbody.querySelector(`tr[data-player="${focused}"]`)?.focus();
 }
 
+const OPEN_HINT = 'Показать матчи и график рейтинга';
+const CLOSE_HINT = 'Скрыть матчи и график рейтинга';
+
 async function togglePlayer(playerId) {
   const id = String(playerId);
-  if (charts.has(id)) {
-    charts.delete(id);
+  if (opened.has(id)) {
+    opened.delete(id);
     updatePlayerRow(id);
-    $('players').querySelector(`tr[data-chart="${id}"]`)?.remove();
+    $('players').querySelector(`tr[data-details="${id}"]`)?.remove();
     return;
   }
 
-  charts.set(id, { loading: true });
+  opened.set(id, { points: { loading: true }, matches: { loading: true } });
   updatePlayerRow(id);
   const row = $('players').querySelector(`tr[data-player="${id}"]`);
-  if (row) row.after(chartRow(id, row));
+  if (row) row.after(detailsRow(id, row));
 
+  // матчи и очки грузятся независимо: сбой одного не прячет другое
+  await Promise.all([
+    loadPart(id, 'points', `/players/${id}/points`),
+    loadPart(id, 'matches', `/players/${id}/matches`),
+  ]);
+}
+
+async function loadPart(id, part, url) {
+  let state;
   try {
-    const resp = await fetch(`/players/${id}/points`);
-    if (!resp.ok) throw new Error(`GET points → ${resp.status}`);
-    charts.set(id, { points: await resp.json() });
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`GET ${url} → ${resp.status}`);
+    state = { data: await resp.json() };
   } catch (e) {
-    charts.set(id, { error: true });
+    state = { error: true };
   }
 
-  // пока ходили за данными, состав мог перерисоваться или график — закрыться
-  if (charts.has(id)) redrawChart(id);
+  // пока ходили за данными, состав мог перерисоваться или строка — закрыться
+  const current = opened.get(id);
+  if (!current) return;
+  opened.set(id, { ...current, [part]: state });
+  renderDetails(id);
 }
 
 function updatePlayerRow(id) {
   const row = $('players').querySelector(`tr[data-player="${id}"]`);
   if (!row) return;
-  const open = charts.has(id);
+  const open = opened.has(id);
   row.classList.toggle('selected', open);
-  row.title = open ? 'Скрыть график рейтинга' : 'Показать график рейтинга';
+  row.title = open ? CLOSE_HINT : OPEN_HINT;
   row.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
-function chartRow(id, playerRow) {
+function detailsRow(id, playerRow) {
   const tr = document.createElement('tr');
-  tr.className = 'chart-row';
-  tr.dataset.chart = id;
+  tr.className = 'details-row';
+  tr.dataset.details = id;
 
   const td = document.createElement('td');
   td.colSpan = 5;
+  // слева матчи, справа график; ширину колонок задаёт CSS
   const box = document.createElement('div');
-  box.className = 'chart';
-  // высота графика — две высоты строки с информацией об игроке
-  // (getBoundingClientRect, а не offsetHeight: тот округляет до целых пикселей)
-  box.style.height = `${playerRow.getBoundingClientRect().height * 2}px`;
+  box.className = 'details';
+  box.innerHTML = '<div class="matches"></div><div class="chart"></div>';
   td.appendChild(box);
   tr.appendChild(td);
 
   // отрисовка после вставки в DOM: до неё ширина блока неизвестна
-  queueMicrotask(() => drawChart(id, box));
+  queueMicrotask(() => renderDetails(id));
   return tr;
 }
 
-function redrawChart(id) {
-  const box = $('players').querySelector(`tr[data-chart="${id}"] .chart`);
-  if (box) drawChart(id, box);
+function renderDetails(id) {
+  const state = opened.get(id);
+  const playerRow = $('players').querySelector(`tr[data-player="${id}"]`);
+  const box = $('players').querySelector(`tr[data-details="${id}"] .details`);
+  if (!state || !playerRow || !box) return;
+
+  const list = box.querySelector('.matches');
+  renderMatches(list, state.matches);
+
+  // график не ниже двух строк состава (getBoundingClientRect, а не
+  // offsetHeight: тот округляет до целых пикселей)
+  const chart = box.querySelector('.chart');
+  const min = playerRow.getBoundingClientRect().height * 2;
+  // на узком экране колонки встают друг под друга — тянуть график
+  // до высоты списка матчей там незачем
+  chart.style.height = `${sideBySide(list, chart) ? Math.max(min, height(list)) : min}px`;
+  drawChart(state.points, chart);
 }
 
-function drawChart(id, box) {
-  const state = charts.get(id);
-  if (!state) return;
+// блоки стоят рядом, пока flex не перенёс график на вторую строку
+const sideBySide = (list, chart) =>
+  Math.abs(list.getBoundingClientRect().top - chart.getBoundingClientRect().top) < 1;
 
+const height = (node) => node.getBoundingClientRect().height;
+
+function renderMatches(list, state) {
+  if (state.loading) return note(list, 'загружаем матчи…');
+  if (state.error) return note(list, 'не удалось загрузить матчи');
+  if (!state.data.length) return note(list, 'матчей пока нет');
+
+  list.innerHTML = '';
+  for (const match of state.data) list.appendChild(matchCard(match));
+}
+
+function matchCard(match) {
+  const div = document.createElement('div');
+  div.className = 'match';
+  // победа известна не всегда: матч может быть не доигран
+  const outcome = match.won === null ? '' : match.won ? ' win' : ' loss';
+  div.innerHTML = `
+    <div class="match-top">
+      <span class="match-date">${fmtDate(match.date) || 'без даты'}</span>
+      <span class="match-sets${outcome}">${escape(match.sets) || '—'}</span>
+    </div>
+    <div class="match-rival">${escape(match.opponent) || '—'}</div>
+    <div class="match-games">${escape(match.games) || '—'}</div>`;
+  return div;
+}
+
+function drawChart(state, box) {
   if (state.loading) return note(box, 'загружаем график…');
   if (state.error) return note(box, 'не удалось загрузить рейтинг');
-  if (!state.points.length) return note(box, 'рейтинг ещё не собран');
+  if (!state.data.length) return note(box, 'рейтинг ещё не собран');
 
   box.innerHTML = '';
-  box.appendChild(buildChart(state.points, box.clientWidth, box.clientHeight));
+  box.appendChild(buildChart(state.data, box.clientWidth, box.clientHeight));
 }
 
 function note(box, text) {
@@ -375,7 +431,7 @@ function fmtMonth(value) {
 
 function closePlayers() {
   selectedTour = null;
-  charts.clear();
+  opened.clear();
   if (location.hash) history.replaceState(null, '', location.pathname);
   $('players-card').hidden = true;
 }
@@ -467,18 +523,12 @@ document.addEventListener('keydown', async (e) => {
   else await togglePlayer(row.dataset.player);
 });
 
-// ширина графика привязана к ширине таблицы, а высота — к высоте строки
+// ширина графика привязана к ширине таблицы, а высота — к соседним блокам
 let resizeTimer = null;
 window.addEventListener('resize', () => {
   clearTimeout(resizeTimer);
   resizeTimer = setTimeout(() => {
-    for (const id of charts.keys()) {
-      const row = $('players').querySelector(`tr[data-player="${id}"]`);
-      const box = $('players').querySelector(`tr[data-chart="${id}"] .chart`);
-      if (!row || !box) continue;
-      box.style.height = `${row.getBoundingClientRect().height * 2}px`;
-      drawChart(id, box);
-    }
+    for (const id of opened.keys()) renderDetails(id);
   }, 150);
 });
 

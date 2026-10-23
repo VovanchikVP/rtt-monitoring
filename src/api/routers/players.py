@@ -1,9 +1,9 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.schemas import PlayerPointRead, RatingRefreshRead
+from src.api.schemas import PlayerMatchRead, PlayerPointRead, RatingRefreshRead
 from src.models.base import get_session
 from src.service import PlayersService
 
@@ -31,3 +31,13 @@ async def refresh_rating(session: SessionDep) -> RatingRefreshRead:
 async def get_points(player_id: int, session: SessionDep) -> list[PlayerPointRead]:
     """История рейтинга игрока: по записи на месяц, от старых к новым."""
     return await PlayersService.get_points(session, player_id)
+
+
+@router.get("/{player_id}/matches", response_model=list[PlayerMatchRead])
+async def get_matches(
+    player_id: int,
+    session: SessionDep,
+    limit: Annotated[int, Query(ge=1, le=50, description="Сколько матчей вернуть")] = 5,
+) -> list[PlayerMatchRead]:
+    """Последние матчи игрока: свежие сверху, счёт — с его стороны."""
+    return await PlayersService.get_matches(session, player_id, limit)

@@ -1,14 +1,16 @@
 import logging
+import re
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import Row, case, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
-from src.api.schemas import PlayerPointRead, RatingRefreshRead
+from src.api.schemas import PlayerMatchRead, PlayerPointRead, RatingRefreshRead
 from src.celery.service.fill_rating_history import FillRatingHistoryService
 from src.celery.tasks import fill_rating_history_task
 from src.const import REQUEST_DELAY
-from src.models import Players, Points
+from src.models import Matches, Players, Points
 
 logger = logging.getLogger(__name__)
 
@@ -16,15 +18,13 @@ logger = logging.getLogger(__name__)
 class PlayersService:
     """Бизнес-логика эндпоинтов игроков."""
 
+    # счёт сета — «6-4», иногда с тай-брейком — «7-6(5)»
+    SET_SCORE = re.compile(r"^(\d+)-(\d+)(.*)$")
+
     @classmethod
     async def get_points(cls, session: AsyncSession, player_id: int) -> list[PlayerPointRead]:
         """История рейтинга игрока, от старых записей к новым."""
-        player = await session.get(Players, player_id)
-        if player is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Игрок {player_id} не найден",
-            )
+        await cls.get_player(session, player_id)
 
         rows = await session.execute(
             select(Points.date, Points.points)
@@ -32,6 +32,85 @@ class PlayersService:
             .order_by(Points.date)
         )
         return [PlayerPointRead.model_validate(row) for row in rows]
+
+    @classmethod
+    async def get_matches(
+        cls, session: AsyncSession, player_id: int, limit: int
+    ) -> list[PlayerMatchRead]:
+        """Последние матчи игрока, свежие сверху.
+
+        Счёт в базе записан со стороны первого игрока матча; здесь он
+        разворачивается так, чтобы читаться со стороны запрошенного.
+        """
+        await cls.get_player(session, player_id)
+
+        rival = aliased(Players)
+        # соперник — тот из двоих, кем игрок не является
+        rival_id = case(
+            (Matches.first_player_id == player_id, Matches.second_player_id),
+            else_=Matches.first_player_id,
+        )
+        rows = await session.execute(
+            select(
+                Matches.date,
+                rival.name.label("opponent"),
+                Matches.first_player_id,
+                Matches.first_score,
+                Matches.second_score,
+                Matches.score,
+                Matches.winner_player_id,
+            )
+            .join(rival, rival.id == rival_id)
+            .where(
+                or_(
+                    Matches.first_player_id == player_id,
+                    Matches.second_player_id == player_id,
+                )
+            )
+            # даты может не быть, такие матчи уходят в конец
+            .order_by(Matches.date.desc().nulls_last(), Matches.id)
+            .limit(limit)
+        )
+        return [cls.as_player_match(row, player_id) for row in rows]
+
+    @classmethod
+    def as_player_match(cls, row: Row, player_id: int) -> PlayerMatchRead:
+        """Строка выборки матчей — в плашку для фронта."""
+        # игрок записан в матче первым, значит счёт уже с его стороны
+        mine = row.first_player_id == player_id
+        return PlayerMatchRead(
+            date=row.date,
+            opponent=row.opponent,
+            sets=cls.sets_score(row.first_score, row.second_score, mine),
+            games=(row.score or None) if mine else cls.flip_games(row.score),
+            won=None if row.winner_player_id is None else row.winner_player_id == player_id,
+        )
+
+    @classmethod
+    def sets_score(cls, first: int | None, second: int | None, mine: bool) -> str | None:
+        """Счёт по сетам «2-1»; None, пока сеты не посчитаны."""
+        if first is None or second is None:
+            return None
+        return f"{first}-{second}" if mine else f"{second}-{first}"
+
+    @classmethod
+    def flip_games(cls, score: str | None) -> str | None:
+        """Развернуть счёт по геймам: в базе он со стороны первого игрока."""
+        if not score:
+            return None
+        # сет непонятного вида оставляем как есть — лучше так, чем потерять
+        return " ".join(cls.SET_SCORE.sub(r"\2-\1\3", part) for part in score.split())
+
+    @classmethod
+    async def get_player(cls, session: AsyncSession, player_id: int) -> Players:
+        """Игрок из базы; 404, если такого нет."""
+        player = await session.get(Players, player_id)
+        if player is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Игрок {player_id} не найден",
+            )
+        return player
 
     @classmethod
     async def refresh_rating(cls, session: AsyncSession) -> RatingRefreshRead:

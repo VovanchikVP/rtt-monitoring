@@ -103,15 +103,28 @@ details.done > summary:focus-visible {
   outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px;
 }
 details.done .wide { margin-bottom: 4px; }
-/* строка с графиком не кликабельна и не подсвечивается при наведении */
-tr.chart-row td { padding-top: 0; border-bottom: 1px solid var(--line); }
-.chart { width: 100%; }
+/* строка с матчами и графиком не кликабельна и не подсвечивается при наведении */
+tr.details-row td { padding-top: 0; border-bottom: 1px solid var(--line); }
+/* на узком экране колонки встают друг под друга */
+.details { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 14px; }
+.matches { flex: 1 1 220px; display: flex; flex-direction: column; gap: 6px; }
+.chart { flex: 2 1 300px; min-width: 0; }
+.match {
+  border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px;
+  display: flex; flex-direction: column; gap: 1px;
+}
+.match-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.match-date { color: var(--muted); font-size: 12px; }
+.match-sets { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.match-sets.win { color: var(--accent); }
+.match-sets.loss { color: var(--danger); }
+.match-rival { font-size: 13px; }
+.match-games { color: var(--muted); font-size: 12px; }
 .chart svg { display: block; width: 100%; height: 100%; }
 .chart .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .chart .dot { fill: var(--card); stroke: var(--accent); stroke-width: 2; }
 .chart .grid { stroke: var(--line); stroke-width: 1; }
 .chart .label { fill: var(--muted); font-size: 10px; }
-.chart .note {
-  display: flex; align-items: center; height: 100%;
-  color: var(--muted); font-size: 13px;
-}
+.note { color: var(--muted); font-size: 13px; }
+.matches .note { padding: 4px 2px; }
+.chart .note { display: flex; align-items: center; height: 100%; }
