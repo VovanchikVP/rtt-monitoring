@@ -11,6 +11,7 @@ from src.celery.service.fill_rating_history import FillRatingHistoryService
 from src.celery.service.fill_tours import FillToursService
 from src.celery.service.search_tours import SearchToursService
 from src.celery.service.sync_tours import SyncToursService
+from src.celery.throttle import clear, next_delay, pause_consuming
 
 logger = logging.getLogger(__name__)
 
@@ -28,13 +29,18 @@ def run_task(task: Task, coro: Coroutine) -> None:
     try:
         run_async(coro)
     except ThrottledError as error:
-        logger.warning(
-            "Задача %s отложена на %s с: внешнее API требует проверку",
-            task.name,
-            error.retry_after,
-        )
+        # проверка держится дольше, чем любая угаданная пауза, поэтому
+        # с каждой неудачей подряд ждём вдвое дольше
+        delay = next_delay(error.retry_after)
+        logger.warning("Задача %s отложена на %s с: внешнее API требует проверку", task.name, delay)
+        # и саму очередь на это время не разбираем: соседние задачи ходят
+        # в то же API и только продлевали бы блокировку
+        pause_consuming(task.request.hostname, delay)
         # from None: трассировка просьбы подождать в логе ни к чему
-        raise task.retry(countdown=error.retry_after, max_retries=THROTTLE_RETRIES) from None
+        raise task.retry(countdown=delay, max_retries=THROTTLE_RETRIES) from None
+
+    # запрос прошёл — блокировки больше нет, отсчёт начинается заново
+    clear()
 
 
 @celery_app.task(bind=True, name="tours.fill_empty")

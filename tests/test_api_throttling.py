@@ -11,6 +11,7 @@ from datetime import date
 import aiohttp
 import pytest
 
+from src.celery import tasks
 from src.celery.service.api import ThrottledError, get_retry_after, post
 from src.celery.service.fill_matches import FillMatchesService
 from src.celery.service.fill_points import FillPointsService
@@ -174,10 +175,15 @@ async def test_fill_points_stops_on_throttling(api, monkeypatch):
 # ---- задача откладывает повтор ----
 
 
+class FakeRequest:
+    hostname = "celery@rtt-worker-1"
+
+
 class FakeTask:
     """Задача celery, которая запоминает вызов retry вместо постановки в очередь."""
 
     name = "points.fill"
+    request = FakeRequest()
 
     def __init__(self) -> None:
         self.countdown = None
@@ -200,7 +206,17 @@ async def boom() -> None:
     raise RuntimeError("настоящая ошибка")
 
 
-def test_throttled_task_is_retried_with_the_asked_pause(caplog):
+@pytest.fixture
+def paused(monkeypatch):
+    """Перехватить остановку очереди: до брокера в тесте не ходим."""
+    calls = []
+    monkeypatch.setattr(
+        tasks, "pause_consuming", lambda worker, seconds: calls.append((worker, seconds))
+    )
+    return calls
+
+
+def test_throttled_task_is_retried_with_the_asked_pause(caplog, paused):
     task = FakeTask()
 
     with pytest.raises(Retry):
@@ -213,10 +229,20 @@ def test_throttled_task_is_retried_with_the_asked_pause(caplog):
     assert all(record.exc_info is None for record in caplog.records)
 
 
-def test_other_errors_are_not_retried():
+def test_throttled_task_also_stops_the_queue(paused):
+    # соседние задачи ходят в то же API и продлевали бы блокировку
+    with pytest.raises(Retry):
+        run_task(FakeTask(), throttled())
+
+    assert paused == [("celery@rtt-worker-1", 42)]
+
+
+def test_other_errors_are_not_retried(paused):
     task = FakeTask()
 
     with pytest.raises(RuntimeError):
         run_task(task, boom())
 
     assert task.countdown is None
+    # обычная ошибка очередь не трогает
+    assert paused == []
