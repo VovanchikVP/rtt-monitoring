@@ -33,6 +33,10 @@ class ProxyService:
         await self.run_creating_pool
         self.run_creating_pool = None
 
+    async def remove(self, proxy: str):
+        if proxy in self.proxies:
+            self.proxies.remove(proxy)
+
     async def get(self, retry: int = 0):
         """Получение прокси из пула"""
         if retry == self.MAX_RETRIES:

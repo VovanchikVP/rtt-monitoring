@@ -1,4 +1,5 @@
 import logging
+import os
 from collections.abc import Mapping
 
 import aiohttp
@@ -28,13 +29,20 @@ class ThrottledError(Exception):
 
 async def post(http: aiohttp.ClientSession, form: list[tuple[str, str]]) -> dict:
     """Запрос к внешнему API. Просьбу подождать отдаёт как `ThrottledError`."""
-    proxy = await proxy_service.get()
-    async with http.post(API_URL, data=form, headers=HEADERS, proxy=proxy) as resp:
-        if resp.status == THROTTLED_STATUS:
-            data = await resp.json(content_type=None)
-            raise ThrottledError(get_retry_after(data, resp.headers))
-        resp.raise_for_status()
-        return await resp.json(content_type=None)
+    params = {"data": form, "headers": HEADERS}
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        params["proxy"] = await proxy_service.get()
+    try:
+        async with http.post(API_URL, **params) as resp:
+            if resp.status == THROTTLED_STATUS:
+                data = await resp.json(content_type=None)
+                raise ThrottledError(get_retry_after(data, resp.headers))
+            resp.raise_for_status()
+            return await resp.json(content_type=None)
+    except aiohttp.ClientHttpProxyError as err:
+        logger.error(f"Прокси: {params.get('proxy')} отказал в соединении!")
+        await proxy_service.remove(params.get("proxy"))
+        raise ThrottledError(THROTTLE_DELAY) from err
 
 
 def get_retry_after(data: object, headers: Mapping[str, str]) -> int:
