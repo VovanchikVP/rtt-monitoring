@@ -67,13 +67,16 @@
       </div>
     </details>
   </div>
+</div>
 
-  <div class="card" id="players-card" hidden>
+<!-- состав турнира: вставляется строкой под самим турниром -->
+<template id="roster-template">
+  <div class="roster">
     <div class="head">
-      <h2 id="players-title">Участники</h2>
-      <span class="status" id="players-status"></span>
+      <h3 class="roster-title"></h3>
+      <span class="status roster-status"></span>
     </div>
-    <div class="wide"><table id="players">
+    <div class="wide"><table class="roster-table">
       <thead>
         <tr>
           <th class="num">#</th><th>Игрок</th><th class="num">Возраст</th>
@@ -83,7 +86,7 @@
       <tbody></tbody>
     </table></div>
   </div>
-</div>
+</template>
 
 <script src="app.js"></script>
 </body>

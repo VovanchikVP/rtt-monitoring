@@ -3,6 +3,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from src.api.middleware import log_requests
 from src.api.routers import players_router, tours_router
 
 logging.basicConfig(
@@ -10,7 +11,12 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 
+# uvicorn пишет свою строку на каждый запрос, но без длительности:
+# access-лог ведёт middleware, чтобы на запрос приходилась одна строка
+logging.getLogger("uvicorn.access").disabled = True
+
 app = FastAPI(title="RTT monitoring")
+app.middleware("http")(log_requests)
 app.include_router(tours_router)
 app.include_router(players_router)
 

@@ -109,6 +109,18 @@ details.done .wide { margin-bottom: 4px; }
   color: var(--text);
   background: color-mix(in srgb, var(--text) 8%, transparent);
 }
+/* состав турнира — строка во всю ширину под самим турниром */
+tr.roster-row > td { padding: 0 10px 10px; }
+.roster {
+  border-left: 2px solid var(--accent);
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  padding: 10px 12px 2px;
+}
+.roster .head { margin-bottom: 4px; }
+.roster h3 { font-size: 14px; margin: 0; }
+.roster-table th { font-size: 11px; }
+.roster-table tr:last-child > td { border-bottom: none; }
 /* строка с матчами и графиком не кликабельна и не подсвечивается при наведении */
 tr.details-row td { padding-top: 0; border-bottom: 1px solid var(--line); }
 /* на узком экране колонки встают друг под друга */

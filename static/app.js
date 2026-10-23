@@ -8,8 +8,15 @@ const toursById = new Map();
 // { loading } | { data } | { error }. Слева от графика идут последние матчи.
 // Каждый игрок открывается и закрывается сам по себе, их может быть сколько угодно
 const opened = new Map();
+// состав выбранного турнира из последнего ответа; null — ещё грузится.
+// Нужен, чтобы при перерисовке списка турниров собрать строку состава заново
+let roster = [];
+// столько колонок в таблице турниров — на всю ширину растягивается состав
+const TOUR_COLUMNS = 6;
 
 const $ = (id) => document.getElementById(id);
+// состав открыт не больше чем у одного турнира, поэтому ищем по всему документу
+const inRoster = (selector) => document.querySelector(`tr[data-roster] ${selector}`);
 const fmtDate = (d) => d ? d.split('-').reverse().join('.') : null;
 
 function tourDates(t) {
@@ -87,7 +94,45 @@ $('done-next').addEventListener('click', () => turnDonePage(1));
 function fillTours(table, tours) {
   const tbody = table.querySelector('tbody');
   tbody.innerHTML = '';
-  for (const t of tours) tbody.appendChild(tourRow(t));
+  for (const t of tours) {
+    tbody.appendChild(tourRow(t));
+    // состав вставляется следующей строкой, прямо под своим турниром
+    if (t.id === selectedTour) tbody.appendChild(rosterRow(t));
+  }
+}
+
+function rosterRow(tour) {
+  const tr = document.createElement('tr');
+  tr.className = 'roster-row';
+  tr.dataset.roster = tour.id;
+
+  const td = document.createElement('td');
+  td.colSpan = TOUR_COLUMNS;
+  td.appendChild($('roster-template').content.cloneNode(true));
+  tr.appendChild(td);
+
+  fillRoster(td.querySelector('.roster'), tour);
+  return tr;
+}
+
+function fillRoster(block, tour) {
+  // пока карточка турнира не заполнена, названия ещё нет — показываем id
+  block.querySelector('.roster-title').textContent = tour?.name
+    ? `Участники — ${tour.name}`
+    : `Участники турнира ${tour?.id ?? selectedTour}`;
+  block.querySelector('.roster-status').textContent = rosterStatus();
+  renderPlayers(block.querySelector('tbody'));
+}
+
+function rosterStatus() {
+  if (roster === null) return 'загружаем…';
+  return roster.length ? `${roster.length} чел.` : 'состав ещё не загружен';
+}
+
+// состав перерисовывается на месте: ходить за списком турниров незачем
+function renderRoster() {
+  const block = inRoster('.roster');
+  if (block) fillRoster(block, toursById.get(selectedTour) ?? { id: selectedTour });
 }
 
 function tourRow(t) {
@@ -96,6 +141,7 @@ function tourRow(t) {
   tr.dataset.tour = t.id;
   tr.tabIndex = 0;
   tr.title = t.id === selectedTour ? 'Скрыть участников' : 'Показать участников';
+  tr.setAttribute('aria-expanded', t.id === selectedTour ? 'true' : 'false');
 
   const name = isPending(t)
     ? '<span class="pending">заполняется…</span>'
@@ -182,7 +228,7 @@ function schedulePoll() {
     pollTimer = null;
     try {
       await loadTours();
-      if (selectedTour !== null) await loadPlayers(selectedTour, true);
+      if (selectedTour !== null) await loadPlayers(selectedTour);
     } catch (e) {
       $('tours-status').textContent = 'нет связи с сервером, пробуем ещё раз';
       schedulePoll();
@@ -197,33 +243,32 @@ function stopPoll() {
   }
 }
 
-async function loadPlayers(tourId, silent = false) {
-  if (!silent) $('players-status').textContent = 'загружаем…';
+// строка состава появляется сразу по клику, не дожидаясь ответа сервера
+function openRoster(tourId) {
+  closePlayers();
+  selectedTour = tourId;
+  roster = null;
+  location.hash = `tour=${tourId}`;   // состав можно открыть по прямой ссылке
+
+  const row = document.querySelector(`tr[data-tour="${tourId}"]`);
+  if (row) row.after(rosterRow(toursById.get(tourId) ?? { id: tourId }));
+  updateTourRow(tourId);
+}
+
+async function loadPlayers(tourId) {
   const resp = await fetch(`/tours/${tourId}/players`);
   if (resp.status === 404) { closePlayers(); return; }
   if (!resp.ok) throw new Error(`GET players → ${resp.status}`);
   const players = await resp.json();
 
-  // раскрытые строки относятся к составу конкретного турнира
-  if (tourId !== selectedTour) opened.clear();
-
-  selectedTour = tourId;
-  location.hash = `tour=${tourId}`;   // состав можно открыть по прямой ссылке
-  $('players-card').hidden = false;
-  // пока карточка не заполнена, названия ещё нет — показываем id
-  const name = toursById.get(tourId)?.name;
-  $('players-title').textContent = name
-    ? `Участники — ${name}`
-    : `Участники турнира ${tourId}`;
-  $('players-status').textContent = players.length
-    ? `${players.length} чел.`
-    : 'состав ещё не загружен';
-
-  renderPlayers(players);
+  // пока ходили за составом, могли выбрать другой турнир
+  if (tourId !== selectedTour) return;
+  roster = players;
+  renderRoster();
 }
 
-function renderPlayers(players) {
-  const tbody = $('players').querySelector('tbody');
+function renderPlayers(tbody) {
+  const players = roster ?? [];
   // строки создаются заново, поэтому фокус запоминаем и возвращаем
   const focused = document.activeElement?.closest?.('tr[data-player]')?.dataset.player ?? null;
   tbody.innerHTML = '';
@@ -267,13 +312,13 @@ async function togglePlayer(playerId) {
   if (opened.has(id)) {
     opened.delete(id);
     updatePlayerRow(id);
-    $('players').querySelector(`tr[data-details="${id}"]`)?.remove();
+    inRoster(`tr[data-details="${id}"]`)?.remove();
     return;
   }
 
   opened.set(id, { points: { loading: true }, matches: { loading: true } });
   updatePlayerRow(id);
-  const row = $('players').querySelector(`tr[data-player="${id}"]`);
+  const row = inRoster(`tr[data-player="${id}"]`);
   if (row) row.after(detailsRow(id, row));
 
   // матчи и очки грузятся независимо: сбой одного не прячет другое
@@ -301,7 +346,7 @@ async function loadPart(id, part, url) {
 }
 
 function updatePlayerRow(id) {
-  const row = $('players').querySelector(`tr[data-player="${id}"]`);
+  const row = inRoster(`tr[data-player="${id}"]`);
   if (!row) return;
   const open = opened.has(id);
   row.classList.toggle('selected', open);
@@ -330,8 +375,8 @@ function detailsRow(id, playerRow) {
 
 function renderDetails(id) {
   const state = opened.get(id);
-  const playerRow = $('players').querySelector(`tr[data-player="${id}"]`);
-  const box = $('players').querySelector(`tr[data-details="${id}"] .details`);
+  const playerRow = inRoster(`tr[data-player="${id}"]`);
+  const box = inRoster(`tr[data-details="${id}"] .details`);
   if (!state || !playerRow || !box) return;
 
   const list = box.querySelector('.matches');
@@ -463,10 +508,22 @@ function fmtMonth(value) {
 }
 
 function closePlayers() {
+  const previous = selectedTour;
   selectedTour = null;
+  roster = [];
   opened.clear();
+  document.querySelector('tr[data-roster]')?.remove();
+  if (previous !== null) updateTourRow(previous);
   if (location.hash) history.replaceState(null, '', location.pathname);
-  $('players-card').hidden = true;
+}
+
+function updateTourRow(tourId) {
+  const row = document.querySelector(`tr[data-tour="${tourId}"]`);
+  if (!row) return;
+  const open = tourId === selectedTour;
+  row.classList.toggle('selected', open);
+  row.title = open ? 'Скрыть участников' : 'Показать участников';
+  row.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
 function tourFromHash() {
@@ -517,10 +574,10 @@ function detail(body) {
 async function toggleTour(tourId) {
   if (tourId === selectedTour) {
     closePlayers();
-  } else {
-    await loadPlayers(tourId);
+    return;
   }
-  await loadTours();   // перерисовка подсветит выбранную строку
+  openRoster(tourId);          // строка появляется сразу, с «загружаем…»
+  await loadPlayers(tourId);
 }
 
 document.addEventListener('click', async (e) => {
@@ -576,9 +633,10 @@ document.addEventListener('visibilitychange', () => {
     await loadTours();
     const fromHash = tourFromHash();
     if (fromHash !== null) {
-      await loadPlayers(fromHash);
-      // перерисовка подсветит строку и достанет турнир из свёрнутой части
+      // перерисовка достанет турнир из свёрнутой части и вернёт строку состава
+      openRoster(fromHash);
       await loadTours();
+      await loadPlayers(fromHash);
     }
   } catch (e) {
     $('tours-status').textContent = 'нет связи с сервером';
