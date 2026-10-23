@@ -92,7 +92,7 @@ async def test_pause_waits_request_delay(monkeypatch):
     await ORIGINAL_PAUSE()
 
     assert slept == [REQUEST_DELAY]
-    assert REQUEST_DELAY == 4
+    assert REQUEST_DELAY == 10
 
 
 async def test_collects_points_of_every_month(api, http):
@@ -156,7 +156,7 @@ def test_all_months_are_missing_for_player_without_points():
 
 
 def test_rate_limit_allows_one_task_per_request_delay():
-    assert FillRatingHistoryService.RATE_LIMIT == f"{60 // REQUEST_DELAY}/m" == "15/m"
+    assert FillRatingHistoryService.RATE_LIMIT == f"{60 // REQUEST_DELAY}/m" == "6/m"
 
 
 async def test_collects_tours_of_every_month(api, http):

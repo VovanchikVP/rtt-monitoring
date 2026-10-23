@@ -3,7 +3,7 @@ from collections.abc import Mapping
 
 import aiohttp
 
-from src.const import API_URL, COOKIES, HEADERS, THROTTLE_DELAY
+from src.const import API_URL, HEADERS, THROTTLE_DELAY
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,7 @@ class ThrottledError(Exception):
 
 async def post(http: aiohttp.ClientSession, form: list[tuple[str, str]]) -> dict:
     """Запрос к внешнему API. Просьбу подождать отдаёт как `ThrottledError`."""
-    async with http.post(API_URL, data=form, headers=HEADERS, cookies=COOKIES) as resp:
+    async with http.post(API_URL, data=form, headers=HEADERS) as resp:
         if resp.status == THROTTLED_STATUS:
             data = await resp.json(content_type=None)
             raise ThrottledError(get_retry_after(data, resp.headers))
