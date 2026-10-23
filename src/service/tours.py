@@ -2,11 +2,18 @@ import logging
 from datetime import date
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, func, select
+from sqlalchemy import Select, and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from celery import chain
-from src.api.schemas import MatchesRefreshRead, TourCreate, TourListRead, TourPlayerRead
+from src.api.schemas import (
+    MatchesRefreshRead,
+    TourCreate,
+    TourListRead,
+    TourPageRead,
+    TourPlayerRead,
+)
 from src.celery.tasks import fill_empty_tours_task, fill_matches_task, fill_points_task
 from src.models import Players, Points, Tours, tours_players
 from src.service.queue import schedule_each
@@ -19,7 +26,43 @@ class ToursService:
 
     @classmethod
     async def get_tours(cls, session: AsyncSession) -> list[TourListRead]:
-        """Список отслеживаемых турниров, ближайшие сверху."""
+        """Отслеживаемые турниры — те, что ещё не закончились. Ближайшие сверху."""
+        rows = await session.execute(
+            cls.tours_select()
+            .where(cls.is_running())
+            .order_by(Tours.begin_date.asc().nulls_last(), Tours.id)
+        )
+        return [TourListRead.model_validate(row) for row in rows]
+
+    @classmethod
+    async def get_finished_tours(
+        cls, session: AsyncSession, limit: int, offset: int
+    ) -> TourPageRead:
+        """Страница завершённых турниров: от поздней даты окончания к ранней.
+
+        Вместе со страницей возвращается общее число завершённых турниров —
+        по нему фронт считает, сколько всего страниц.
+        """
+        total = await session.scalar(
+            select(func.count()).select_from(Tours).where(cls.is_finished())
+        )
+        rows = await session.execute(
+            cls.tours_select()
+            .where(cls.is_finished())
+            # id вторым ключом: у турниров одного дня порядок должен быть
+            # одинаковым от запроса к запросу, иначе страницы поедут
+            .order_by(Tours.end_date.desc(), Tours.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        return TourPageRead(
+            items=[TourListRead.model_validate(row) for row in rows],
+            total=total or 0,
+        )
+
+    @classmethod
+    def tours_select(cls) -> Select:
+        """Поля турнира для списка вместе с числом участников."""
         players_count = (
             select(func.count())
             .select_from(tours_players)
@@ -27,18 +70,29 @@ class ToursService:
             .scalar_subquery()
             .label("players_count")
         )
-
-        rows = await session.execute(
-            select(
-                Tours.id,
-                Tours.name,
-                Tours.location,
-                Tours.begin_date,
-                Tours.end_date,
-                players_count,
-            ).order_by(Tours.begin_date.asc().nulls_last(), Tours.id)
+        return select(
+            Tours.id,
+            Tours.name,
+            Tours.location,
+            Tours.begin_date,
+            Tours.end_date,
+            players_count,
         )
-        return [TourListRead.model_validate(row) for row in rows]
+
+    @classmethod
+    def is_finished(cls) -> ColumnElement[bool]:
+        """Турнир завершён, когда дата окончания уже прошла.
+
+        Поле `is_finished` для этого не годится: его проставляет задача
+        разбора матчей, и у турниров, до которых она не дошла, оно так
+        и остаётся снятым.
+        """
+        return and_(Tours.end_date.is_not(None), Tours.end_date < date.today())
+
+    @classmethod
+    def is_running(cls) -> ColumnElement[bool]:
+        """Турнир ещё не закончился; незаполненный дат не знает и тоже сюда."""
+        return or_(Tours.end_date.is_(None), Tours.end_date >= date.today())
 
     @classmethod
     async def create_tour(cls, session: AsyncSession, payload: TourCreate) -> Tours:

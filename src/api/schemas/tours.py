@@ -27,6 +27,13 @@ class TourListRead(TourRead):
     players_count: int = Field(default=0, description="Участников в базе")
 
 
+class TourPageRead(BaseModel):
+    """Страница списка турниров: сами турниры и сколько их всего."""
+
+    items: list[TourListRead] = Field(default_factory=list, description="Турниры страницы")
+    total: int = Field(default=0, description="Всего турниров в выборке")
+
+
 class MatchesRefreshRead(BaseModel):
     """Результат постановки задач на обновление матчей."""
 

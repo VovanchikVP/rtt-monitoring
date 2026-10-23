@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from src.celery.service.dates import parse_date
+from src.celery.service.response import get_node
 from src.const import API_URL, HEADERS, HTTP_TIMEOUT
 from src.models import Players, Points, RatingDetails, Tours
 from src.models.base import async_session
@@ -112,7 +113,7 @@ class FillPointsService:
     @classmethod
     def get_points(cls, data: dict) -> int:
         """Очки игрока из ответа `rating.details`; без рейтинга считаем 0."""
-        rating = data.get("data", {}).get("rating.details", {}).get("rating") or {}
+        rating = get_node(data, "rating.details").get("rating") or {}
         return rating.get("points") or 0
 
     @classmethod
@@ -135,7 +136,7 @@ class FillPointsService:
         Один турнир в списке встречается один раз, но ответы соседних месяцев
         пересекаются, поэтому записи дедуплицируются по `tour_id`.
         """
-        tours = data.get("data", {}).get("rating.details", {}).get("tours") or []
+        tours = get_node(data, "rating.details").get("tours") or []
         parsed = {
             tour["tour_id"]: {
                 "tour_id": tour["tour_id"],

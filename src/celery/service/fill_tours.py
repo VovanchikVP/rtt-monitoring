@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.celery.service.dates import parse_date
 from src.celery.service.fill_rating_history import FillRatingHistoryService
+from src.celery.service.response import get_node
 from src.const import API_URL, HEADERS, HTTP_TIMEOUT
 from src.models import Players, Tours, tours_players
 from src.models.base import async_session
@@ -89,7 +90,7 @@ class FillToursService:
     @classmethod
     def get_tour_main(cls, data: dict) -> dict:
         """Основные поля карточки турнира из ответа `tour.card.main`."""
-        tour = data.get("data", {}).get("tour.card.main", {})
+        tour = get_node(data, "tour.card.main")
         return {
             "name": tour.get("name"),
             "location": tour.get("location"),
@@ -102,7 +103,7 @@ class FillToursService:
     @classmethod
     def get_tour_players(cls, data: dict, exclude_left: bool = True) -> list[dict]:
         """Участники турнира в виде полей таблицы `players`."""
-        players = data.get("data", {}).get("tour.card.main", {}).get("players", [])
+        players = get_node(data, "tour.card.main").get("players") or []
         return [
             {
                 "id": p.get("player_id"),

@@ -1,7 +1,14 @@
 from .matches import MatchRead, PlayerMatchRead
 from .players import PlayerPointRead, RatingRefreshRead, ToursRefreshRead
 from .rating_details import RatingDetailsRead
-from .tours import MatchesRefreshRead, TourCreate, TourListRead, TourPlayerRead, TourRead
+from .tours import (
+    MatchesRefreshRead,
+    TourCreate,
+    TourListRead,
+    TourPageRead,
+    TourPlayerRead,
+    TourRead,
+)
 
 __all__ = [
     "MatchRead",
@@ -12,6 +19,7 @@ __all__ = [
     "RatingRefreshRead",
     "TourCreate",
     "TourListRead",
+    "TourPageRead",
     "TourPlayerRead",
     "TourRead",
     "ToursRefreshRead",

@@ -21,40 +21,33 @@ function tourDates(t) {
 // турнир считается незаполненным, пока фоновая задача не подтянула карточку
 const isPending = (t) => t.name === null;
 
-function todayISO() {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
-
-// турнир завершён, когда дата окончания уже прошла; незаполненный турнир
-// дат ещё не знает и завершённым не считается
-const isFinished = (t) => Boolean(t.end_date) && t.end_date < todayISO();
-
 // свёрнутую секцию раскрываем один раз на выбор турнира, иначе перерисовка
 // по таймеру не давала бы свернуть её обратно
 let revealedTour = null;
 
-function renderTours(tours) {
+// завершённые приходят страницами: сервер отдаёт партию и общее их число
+const DONE_LIMIT = 10;
+let doneOffset = 0;
+let doneTotal = 0;
+
+function renderTours(current, finished) {
   // строки создаются заново, поэтому фокус запоминаем и возвращаем — иначе
   // после первого же нажатия Enter клавиатурная навигация обрывается
   const focused = document.activeElement?.closest?.('tr[data-tour]')?.dataset.tour ?? null;
 
-  const current = tours.filter((t) => !isFinished(t));
-  // в основном списке ближайшие сверху, в завершённых — наоборот, свежие
-  const finished = tours.filter(isFinished).reverse();
-
   fillTours($('tours'), current);
   fillTours($('tours-done'), finished);
 
-  $('tours-empty').hidden = tours.length > 0;
+  const total = current.length + doneTotal;
+  $('tours-empty').hidden = total > 0;
   $('tours').hidden = current.length === 0;
-  $('tours-current-empty').hidden = tours.length === 0 || current.length > 0;
+  $('tours-current-empty').hidden = total === 0 || current.length > 0;
 
   const box = $('tours-done-box');
-  box.hidden = finished.length === 0;
+  box.hidden = doneTotal === 0;
   $('tours-done-summary').textContent =
-    `Завершённые турниры — ${finished.length} ${tourWord(finished.length)}`;
+    `Завершённые турниры — ${doneTotal} ${tourWord(doneTotal)}`;
+  renderPager();
 
   // выбранный турнир мог оказаться в свёрнутой части
   if (selectedTour !== revealedTour) {
@@ -66,6 +59,30 @@ function renderTours(tours) {
     document.querySelector(`tr[data-tour="${focused}"]`)?.focus();
   }
 }
+
+function renderPager() {
+  // кнопки не пересоздаются, а только меняют состояние: иначе фокус
+  // слетал бы с них при каждой перерисовке по таймеру
+  const pages = Math.max(1, Math.ceil(doneTotal / DONE_LIMIT));
+  $('tours-done-pager').hidden = pages < 2;
+  $('done-page').textContent = `${Math.floor(doneOffset / DONE_LIMIT) + 1} из ${pages}`;
+  $('done-prev').disabled = doneOffset === 0;
+  $('done-next').disabled = doneOffset + DONE_LIMIT >= doneTotal;
+}
+
+async function turnDonePage(step) {
+  const pressed = step > 0 ? $('done-next') : $('done-prev');
+  const wasFocused = document.activeElement === pressed;
+
+  doneOffset = Math.max(0, doneOffset + step * DONE_LIMIT);
+  await loadTours();
+
+  // дошли до края — кнопка погасла, уводим фокус на соседнюю
+  if (wasFocused && pressed.disabled) (step > 0 ? $('done-prev') : $('done-next')).focus();
+}
+
+$('done-prev').addEventListener('click', () => turnDonePage(-1));
+$('done-next').addEventListener('click', () => turnDonePage(1));
 
 function fillTours(table, tours) {
   const tbody = table.querySelector('tbody');
@@ -117,15 +134,26 @@ function escape(s) {
 }
 
 async function loadTours() {
-  const resp = await fetch('/tours');
-  if (!resp.ok) throw new Error(`GET /tours → ${resp.status}`);
-  const tours = await resp.json();
+  // два списка: отслеживаемые целиком и страница завершённых
+  const [current, finished] = await Promise.all([
+    get('/tours'),
+    get(`/tours/finished?limit=${DONE_LIMIT}&offset=${doneOffset}`),
+  ]);
+
+  // турниры могли удалить, и страницы с таким смещением больше нет
+  const lastOffset = Math.max(0, Math.ceil(finished.total / DONE_LIMIT) - 1) * DONE_LIMIT;
+  if (doneOffset > lastOffset) {
+    doneOffset = lastOffset;
+    return loadTours();          // смещение уже верное, второй раз не повторится
+  }
+
+  doneTotal = finished.total;
   toursById.clear();
-  for (const t of tours) toursById.set(t.id, t);
-  renderTours(tours);
+  for (const t of [...current, ...finished.items]) toursById.set(t.id, t);
+  renderTours(current, finished.items);
 
   // опрос нужен, только пока есть незаполненные турниры
-  const pending = tours.filter(isPending).length;
+  const pending = [...current, ...finished.items].filter(isPending).length;
   if (pending > 0) {
     $('tours-status').innerHTML =
       `<span class="dot"></span>ждём данные по ${pending} ${plural(pending)}`;
@@ -134,7 +162,12 @@ async function loadTours() {
     stopPoll();
     $('tours-status').textContent = '';
   }
-  return tours;
+}
+
+async function get(url) {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`GET ${url} → ${resp.status}`);
+  return resp.json();
 }
 
 function plural(n) {
@@ -542,7 +575,11 @@ document.addEventListener('visibilitychange', () => {
   try {
     await loadTours();
     const fromHash = tourFromHash();
-    if (fromHash !== null) await loadPlayers(fromHash);
+    if (fromHash !== null) {
+      await loadPlayers(fromHash);
+      // перерисовка подсветит строку и достанет турнир из свёрнутой части
+      await loadTours();
+    }
   } catch (e) {
     $('tours-status').textContent = 'нет связи с сервером';
     schedulePoll();

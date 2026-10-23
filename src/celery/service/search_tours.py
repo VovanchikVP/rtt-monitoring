@@ -8,6 +8,7 @@ import aiohttp
 from sqlalchemy.dialects.postgresql import insert
 
 from src.celery.app import celery_app
+from src.celery.service.response import get_node
 from src.const import API_URL, HEADERS, HTTP_TIMEOUT
 from src.models import SearchSettings, Tours
 from src.models.base import async_session
@@ -187,11 +188,11 @@ class SearchToursService:
     @classmethod
     def get_page_tour_ids(cls, data: dict) -> list[int]:
         """Идентификаторы турниров из ответа `tour.roster`."""
-        records = data.get("data", {}).get("tour.roster", {}).get("records") or []
+        records = get_node(data, "tour.roster").get("records") or []
         return [record["tour_id"] for record in records if record.get("tour_id")]
 
     @classmethod
     def get_page_max(cls, data: dict) -> int:
         """Число страниц в выдаче; без навигатора считаем, что страница одна."""
-        navigator = data.get("data", {}).get("tour.roster", {}).get("navigator") or {}
+        navigator = get_node(data, "tour.roster").get("navigator") or {}
         return navigator.get("page_max") or 1

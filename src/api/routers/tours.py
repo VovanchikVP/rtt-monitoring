@@ -1,12 +1,13 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.schemas import (
     MatchesRefreshRead,
     TourCreate,
     TourListRead,
+    TourPageRead,
     TourPlayerRead,
     TourRead,
 )
@@ -21,8 +22,21 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 @router.get("", response_model=list[TourListRead])
 async def get_tours(session: SessionDep) -> list[TourListRead]:
-    """Список отслеживаемых турниров, ближайшие сверху."""
+    """Отслеживаемые турниры — те, что ещё не закончились; ближайшие сверху."""
     return await ToursService.get_tours(session)
+
+
+@router.get("/finished", response_model=TourPageRead)
+async def get_finished_tours(
+    session: SessionDep,
+    limit: Annotated[int, Query(ge=1, le=100, description="Сколько турниров вернуть")] = 10,
+    offset: Annotated[int, Query(ge=0, description="Сколько турниров пропустить")] = 0,
+) -> TourPageRead:
+    """Страница завершённых турниров, от поздней даты окончания к ранней.
+
+    Вместе со страницей приходит общее число завершённых турниров в базе.
+    """
+    return await ToursService.get_finished_tours(session, limit, offset)
 
 
 @router.post("", response_model=TourRead, status_code=status.HTTP_201_CREATED)

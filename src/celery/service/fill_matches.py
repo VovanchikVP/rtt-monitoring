@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert
 from src.celery.app import celery_app
 from src.celery.service.dates import parse_date
 from src.celery.service.fill_rating_history import FillRatingHistoryService
+from src.celery.service.response import get_node
 from src.const import API_URL, HEADERS, HTTP_TIMEOUT, REQUEST_DELAY
 from src.models import Matches, Players, Tours
 from src.models.base import async_session
@@ -121,7 +122,7 @@ class FillMatchesService:
     @classmethod
     def get_matches(cls, data: dict, tour_id: int) -> list[dict]:
         """Матчи из ответа `tour.card.main` в виде полей таблицы `matches`."""
-        matches = data.get("data", {}).get("tour.card.main", {}).get("matches") or []
+        matches = get_node(data, "tour.card.main").get("matches") or []
         parsed = []
         for match in matches:
             # в сетке есть пары, куда соперник ещё не вышел: там стоит 0
@@ -149,7 +150,7 @@ class FillMatchesService:
     @classmethod
     def get_stage_ids(cls, data: dict) -> list[int]:
         """Идентификаторы этапов турнира из ответа `tour.card.main`."""
-        stages = data.get("data", {}).get("tour.card.main", {}).get("stages") or []
+        stages = get_node(data, "tour.card.main").get("stages") or []
         return [stage["stage_id"] for stage in stages if stage.get("stage_id")]
 
     @classmethod
@@ -189,7 +190,7 @@ class FillMatchesService:
     @classmethod
     def get_grid_matches(cls, data: dict, tour_id: int) -> list[dict]:
         """Матчи из ответа `tour.card.grid` в виде полей таблицы `matches`."""
-        grids = data.get("data", {}).get("tour.card.grid", {}).get("grids") or []
+        grids = get_node(data, "tour.card.grid").get("grids") or []
         parsed = []
         for grid in grids:
             for cell in grid.get("cells") or []:
@@ -237,7 +238,7 @@ class FillMatchesService:
     @classmethod
     def get_tour_card(cls, data: dict) -> dict:
         """Поля турнира из ответа `tour.card.main`, которые стоит освежить."""
-        card = data.get("data", {}).get("tour.card.main") or {}
+        card = get_node(data, "tour.card.main")
         return {
             "begin_date": parse_date(card.get("begin_date")),
             "end_date": parse_date(card.get("end_date")),
@@ -326,7 +327,7 @@ class FillMatchesService:
 
         None, если не хватает обязательных полей: имени или даты рождения.
         """
-        card = data.get("data", {}).get("player.card.main") or {}
+        card = get_node(data, "player.card.main")
         name = " ".join(
             part for part in (card.get(key) for key in ("name_f", "name_i", "name_o")) if part
         )
