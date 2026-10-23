@@ -27,6 +27,13 @@ class TourListRead(TourRead):
     players_count: int = Field(default=0, description="Участников в базе")
 
 
+class MatchesRefreshRead(BaseModel):
+    """Результат постановки задач на обновление матчей."""
+
+    tours: int = Field(description="Турниров в базе")
+    queued: int = Field(description="Поставлено задач — по одной на турнир")
+
+
 class TourPlayerRead(BaseModel):
     """Участник турнира в итоговом списке."""
 

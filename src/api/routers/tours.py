@@ -3,7 +3,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.schemas import TourCreate, TourListRead, TourPlayerRead, TourRead
+from src.api.schemas import (
+    MatchesRefreshRead,
+    TourCreate,
+    TourListRead,
+    TourPlayerRead,
+    TourRead,
+)
 from src.models import Tours
 from src.models.base import get_session
 from src.service import ToursService
@@ -26,6 +32,25 @@ async def create_tour(payload: TourCreate, session: SessionDep) -> Tours:
     Запись создаётся пустой, остальные поля дозаполняет задача celery.
     """
     return await ToursService.create_tour(session, payload)
+
+
+@router.post(
+    "/matches/refresh",
+    response_model=MatchesRefreshRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def refresh_matches(session: SessionDep) -> MatchesRefreshRead:
+    """Принудительно обновить матчи во всех турнирах.
+
+    На каждый турнир ставится отдельная задача: она перезапрашивает карточку
+    вместе с сеткой и переписывает матчи турнира целиком, попутно освежая
+    его даты, место и признак завершённости. В отличие от суточной задачи
+    даты и `is_finished` не ограничивают выбор — берутся все турниры базы.
+
+    Ответ приходит сразу, работа идёт в фоне: запросы к внешнему API
+    разводятся по времени, так что на большой базе обход займёт часы.
+    """
+    return await ToursService.refresh_matches(session)
 
 
 @router.delete("/{tour_id}", status_code=status.HTTP_204_NO_CONTENT)

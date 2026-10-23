@@ -6,9 +6,10 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from celery import chain
-from src.api.schemas import TourCreate, TourListRead, TourPlayerRead
-from src.celery.tasks import fill_empty_tours_task, fill_points_task
+from src.api.schemas import MatchesRefreshRead, TourCreate, TourListRead, TourPlayerRead
+from src.celery.tasks import fill_empty_tours_task, fill_matches_task, fill_points_task
 from src.models import Players, Points, Tours, tours_players
+from src.service.queue import schedule_each
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +66,23 @@ class ToursService:
             chain(fill_empty_tours_task.si(), fill_points_task.si()).delay()
         except Exception:
             logger.exception("Не удалось поставить задачу заполнения турнира %s", tour_id)
+
+    @classmethod
+    async def refresh_matches(cls, session: AsyncSession) -> MatchesRefreshRead:
+        """Поставить задачу разбора матчей на каждый турнир в базе.
+
+        Суточная `matches.fill_all` берёт только начавшиеся и ещё не
+        помеченные завершёнными турниры; эта ручка не смотрит ни на даты,
+        ни на `is_finished` — матчи турнира переписываются заново.
+        """
+        tour_ids = list(await session.scalars(select(Tours.id).order_by(Tours.id)))
+        if not tour_ids:
+            logger.info("Обновление матчей: турниров в базе нет")
+            return MatchesRefreshRead(tours=0, queued=0)
+
+        schedule_each(fill_matches_task, tour_ids)
+        logger.info("Обновление матчей: поставлено задач %s", len(tour_ids))
+        return MatchesRefreshRead(tours=len(tour_ids), queued=len(tour_ids))
 
     @classmethod
     async def delete_tour(cls, session: AsyncSession, tour_id: int) -> None:

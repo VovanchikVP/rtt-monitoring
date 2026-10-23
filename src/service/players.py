@@ -14,8 +14,8 @@ from src.api.schemas import (
 )
 from src.celery.service.fill_rating_history import FillRatingHistoryService
 from src.celery.tasks import fill_player_tours_task, fill_rating_history_task
-from src.const import REQUEST_DELAY
 from src.models import Matches, Players, Points
+from src.service.queue import schedule_each
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ class PlayersService:
             logger.info("Обновление рейтинга: игроков в базе нет")
             return RatingRefreshRead(players=0, queued=0, months=FillRatingHistoryService.MONTHS)
 
-        cls.schedule(fill_rating_history_task, player_ids)
+        schedule_each(fill_rating_history_task, player_ids)
         logger.info("Обновление рейтинга: поставлено задач %s", len(player_ids))
         return RatingRefreshRead(
             players=len(player_ids),
@@ -146,22 +146,6 @@ class PlayersService:
             logger.info("Обновление турниров: игроков в базе нет")
             return ToursRefreshRead(players=0, queued=0)
 
-        cls.schedule(fill_player_tours_task, player_ids)
+        schedule_each(fill_player_tours_task, player_ids)
         logger.info("Обновление турниров: поставлено задач %s", len(player_ids))
         return ToursRefreshRead(players=len(player_ids), queued=len(player_ids))
-
-    @classmethod
-    def schedule(cls, task: object, player_ids: list[int]) -> None:
-        """Поставить задачу на каждого игрока с шагом `REQUEST_DELAY`."""
-        try:
-            for number, player_id in enumerate(player_ids):
-                # задачи расходятся по времени ещё на входе в очередь,
-                # rate_limit самой задачи страхует от наплыва
-                task.apply_async(args=[player_id], countdown=number * REQUEST_DELAY)
-        except Exception as error:
-            # периодической задачи на этот случай нет, молчать нельзя
-            logger.exception("Не удалось поставить задачи в очередь")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Очередь задач недоступна, попробуйте позже",
-            ) from error
