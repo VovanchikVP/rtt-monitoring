@@ -1,5 +1,5 @@
 from .matches import MatchRead, PlayerMatchRead
-from .players import PlayerPointRead, RatingRefreshRead
+from .players import PlayerPointRead, RatingRefreshRead, ToursRefreshRead
 from .rating_details import RatingDetailsRead
 from .tours import TourCreate, TourListRead, TourPlayerRead, TourRead
 
@@ -13,4 +13,5 @@ __all__ = [
     "TourListRead",
     "TourPlayerRead",
     "TourRead",
+    "ToursRefreshRead",
 ]

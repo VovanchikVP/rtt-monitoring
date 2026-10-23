@@ -6,9 +6,14 @@ from sqlalchemy import Row, case, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from src.api.schemas import PlayerMatchRead, PlayerPointRead, RatingRefreshRead
+from src.api.schemas import (
+    PlayerMatchRead,
+    PlayerPointRead,
+    RatingRefreshRead,
+    ToursRefreshRead,
+)
 from src.celery.service.fill_rating_history import FillRatingHistoryService
-from src.celery.tasks import fill_rating_history_task
+from src.celery.tasks import fill_player_tours_task, fill_rating_history_task
 from src.const import REQUEST_DELAY
 from src.models import Matches, Players, Points
 
@@ -120,7 +125,7 @@ class PlayersService:
             logger.info("Обновление рейтинга: игроков в базе нет")
             return RatingRefreshRead(players=0, queued=0, months=FillRatingHistoryService.MONTHS)
 
-        cls.schedule_history(player_ids)
+        cls.schedule(fill_rating_history_task, player_ids)
         logger.info("Обновление рейтинга: поставлено задач %s", len(player_ids))
         return RatingRefreshRead(
             players=len(player_ids),
@@ -129,18 +134,33 @@ class PlayersService:
         )
 
     @classmethod
-    def schedule_history(cls, player_ids: list[int]) -> None:
-        """Поставить задачи в очередь с шагом `REQUEST_DELAY` между ними."""
+    async def refresh_tours(cls, session: AsyncSession) -> ToursRefreshRead:
+        """Поставить задачу обновления сыгранных турниров на каждого игрока.
+
+        Задача перезапрашивает карточку игрока в текущем рейтинг-листе и
+        переписывает его результаты: места и очки за турнир пересчитываются,
+        а фоновые задачи дотягивают только то, чего в базе ещё нет.
+        """
+        player_ids = list(await session.scalars(select(Players.id).order_by(Players.id)))
+        if not player_ids:
+            logger.info("Обновление турниров: игроков в базе нет")
+            return ToursRefreshRead(players=0, queued=0)
+
+        cls.schedule(fill_player_tours_task, player_ids)
+        logger.info("Обновление турниров: поставлено задач %s", len(player_ids))
+        return ToursRefreshRead(players=len(player_ids), queued=len(player_ids))
+
+    @classmethod
+    def schedule(cls, task: object, player_ids: list[int]) -> None:
+        """Поставить задачу на каждого игрока с шагом `REQUEST_DELAY`."""
         try:
             for number, player_id in enumerate(player_ids):
                 # задачи расходятся по времени ещё на входе в очередь,
                 # rate_limit самой задачи страхует от наплыва
-                fill_rating_history_task.apply_async(
-                    args=[player_id], countdown=number * REQUEST_DELAY
-                )
+                task.apply_async(args=[player_id], countdown=number * REQUEST_DELAY)
         except Exception as error:
             # периодической задачи на этот случай нет, молчать нельзя
-            logger.exception("Не удалось поставить задачи обновления рейтинга")
+            logger.exception("Не удалось поставить задачи в очередь")
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Очередь задач недоступна, попробуйте позже",

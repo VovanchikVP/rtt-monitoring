@@ -11,6 +11,13 @@ class RatingRefreshRead(BaseModel):
     months: int = Field(description="Глубина истории рейтинга, месяцы")
 
 
+class ToursRefreshRead(BaseModel):
+    """Результат постановки задач на обновление сыгранных турниров."""
+
+    players: int = Field(description="Игроков в базе")
+    queued: int = Field(description="Поставлено задач — по одной на игрока")
+
+
 class PlayerPointRead(BaseModel):
     """Одна запись истории рейтинга игрока."""
 

@@ -3,7 +3,12 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.schemas import PlayerMatchRead, PlayerPointRead, RatingRefreshRead
+from src.api.schemas import (
+    PlayerMatchRead,
+    PlayerPointRead,
+    RatingRefreshRead,
+    ToursRefreshRead,
+)
 from src.models.base import get_session
 from src.service import PlayersService
 
@@ -25,6 +30,22 @@ async def refresh_rating(session: SessionDep) -> RatingRefreshRead:
     работа идёт в фоне.
     """
     return await PlayersService.refresh_rating(session)
+
+
+@router.post(
+    "/tours/refresh",
+    response_model=ToursRefreshRead,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def refresh_tours(session: SessionDep) -> ToursRefreshRead:
+    """Обновить сведения о сыгранных турнирах у всех игроков.
+
+    На каждого игрока ставится отдельная задача: она перезапрашивает его
+    карточку в текущем рейтинг-листе и переписывает места и очки за турниры
+    последнего года, попутно заводя незнакомые турниры. Ответ приходит сразу,
+    работа идёт в фоне.
+    """
+    return await PlayersService.refresh_tours(session)
 
 
 @router.get("/{player_id}/points", response_model=list[PlayerPointRead])

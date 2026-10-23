@@ -1,5 +1,6 @@
 from src.celery.app import celery_app, run_async
 from src.celery.service.fill_matches import FillMatchesService
+from src.celery.service.fill_player_tours import FillPlayerToursService
 from src.celery.service.fill_points import FillPointsService
 from src.celery.service.fill_rating_history import FillRatingHistoryService
 from src.celery.service.fill_tours import FillToursService
@@ -27,6 +28,16 @@ def fill_rating_history_task(player_id: int) -> None:
     по времени — внешнее API не любит частых обращений.
     """
     run_async(FillRatingHistoryService.run(player_id))
+
+
+@celery_app.task(name="tours.fill_player", rate_limit=FillPlayerToursService.RATE_LIMIT)
+def fill_player_tours_task(player_id: int) -> None:
+    """Обновить результаты одного игрока по сыгранным турнирам.
+
+    Задача ставится по одной на игрока, rate_limit разводит их запуск
+    по времени — внешнее API не любит частых обращений.
+    """
+    run_async(FillPlayerToursService.run(player_id))
 
 
 @celery_app.task(name="tours.sync_players")
